@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 7
+names: ['green', 'left', 'red', 'right', 'stop', 'straight', 'yellow']
+
+roboflow:
+  workspace: traffic-light-2grkt
+  project: traffic-signal-blyl9
+  version: 9
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/traffic-light-2grkt/traffic-signal-blyl9/dataset/9
