@@ -381,15 +381,21 @@ class CarritoTMR:
             self.autonomous.deactivate()
 
     def _setup_leds(self):
+        self._led_h   = None
+        self._leds_ok = False
         try:
-            self._led_h = lgpio.gpiochip_open(4)
+            h = lgpio.gpiochip_open(4)
             for pin in (PIN_LED_STOP, PIN_LED_STATUS):
-                lgpio.gpio_claim_output(self._led_h, pin, 0, 0)
+                lgpio.gpio_claim_output(h, pin, 0, 0)
+            self._led_h   = h
             self._leds_ok = True
         except Exception as e:
             print(f"[WARN] LEDs no disponibles (GPIO): {e}")
-            self._led_h  = None
-            self._leds_ok = False
+            # Cerrar el handle si se abrió pero el claim falló
+            try:
+                lgpio.gpiochip_close(h)
+            except Exception:
+                pass
 
     def _set_led(self, pin: int, state):
         if not self._leds_ok or self._led_h is None:
