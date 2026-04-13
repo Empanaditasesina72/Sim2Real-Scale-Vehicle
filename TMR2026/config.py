@@ -36,7 +36,7 @@ TOF_ADDR_REAR       = 0x29 # dirección por defecto
 # --- PCA9685 ---
 PCA9685_I2C_ADDR   = 0x40   # Dirección por defecto
 PCA9685_PWM_FREQ   = 50     # Hz (estándar servo analógico)
-SERVO_CHANNEL      = 0      # Canal MG90s en la placa
+SERVO_CHANNEL      = 15     # Canal MG90s en la placa (verificado en Pi)
 
 # --- Servo MG90s ---
 SERVO_MIN_PULSE_US  = 500   # µs → ~0°
