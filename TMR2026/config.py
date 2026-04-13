@@ -42,8 +42,8 @@ SERVO_CHANNEL      = 15     # Canal MG90s en la placa (verificado en Pi)
 SERVO_MIN_PULSE_US  = 500   # µs → ~0°
 SERVO_MAX_PULSE_US  = 2500  # µs → ~180°
 SERVO_CENTER_ANGLE  = 90.0  # grados — ruedas al frente
-SERVO_MIN_ANGLE     = 45.0  # grados — giro máximo izquierda
-SERVO_MAX_ANGLE     = 135.0 # grados — giro máximo derecha
+SERVO_MIN_ANGLE     = 58.0  # grados — giro máximo izquierda (reducido para no trabarse)
+SERVO_MAX_ANGLE     = 122.0 # grados — giro máximo derecha  (reducido para no trabarse)
 
 # ============================================================
 # PI AI CAMERA  (Sony IMX500 — aceleración NPU on-chip)
