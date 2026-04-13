@@ -159,8 +159,8 @@ BTN_PARKING    = 3
 BTN_BACK_TO_MANUAL = BTN_MANUAL
 BTN_VISION_TEST    = BTN_VISION
 
-AXIS_STEER    = 3   # Joystick derecho X
-AXIS_THROTTLE = 5   # Gatillo R2 (−1 = soltado, +1 = fondo)
+AXIS_STEER    = 0   # Joystick IZQUIERDO X  (−1=izq, +1=der)
+AXIS_THROTTLE = 5   # Gatillo R2            (−1=suelto, +1=fondo)
 AXIS_BRAKE    = 4   # Gatillo L2
 
 JOYSTICK_DEADBAND = 0.08
