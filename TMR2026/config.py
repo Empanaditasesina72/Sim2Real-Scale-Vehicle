@@ -48,18 +48,29 @@ SERVO_MAX_ANGLE     = 135.0 # grados — giro máximo derecha
 # ============================================================
 # PI AI CAMERA  (Sony IMX500 — aceleración NPU on-chip)
 # ============================================================
-# Instalar modelos: sudo apt install imx500-all
-# YOLOv8 no está en el paquete estándar — usamos EfficientDet Lite0
-# que detecta las mismas clases COCO (stop sign, traffic light, person, car)
 IMX500_MODEL_PATH = "/usr/share/imx500-models/imx500_network_efficientdet_lite0_pp.rpk"
 
 CAMERA_WIDTH  = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS    = 30
 
+# ── Calibración de imagen ────────────────────────────────────
+# AWB: 0=Auto 1=Incandescent 2=Tungsten 3=Fluorescent 4=Indoor 5=Daylight
+# Para competencia en interior con luz artificial → Indoor(4) o Fluorescent(3)
+CAMERA_AWB_MODE   = 4      # Indoor — corrige el tono azulado en interiores
+CAMERA_CONTRAST   = 1.5    # [0–32]  más contraste para bordes definidos
+CAMERA_SATURATION = 1.8    # [0–32]  más saturación para colores vivos (rojo del STOP)
+CAMERA_SHARPNESS  = 4.0    # [0–16]  imagen más nítida para detección
+CAMERA_DENOISE    = 2      # 0=Off 2=CDN_Fast 3=CDN_HQ
+CAMERA_BUFFERS    = 4      # frames en buffer — más fluidez, más latencia
+
+# ── Detección ────────────────────────────────────────────────
 # Umbral de confianza para aceptar detecciones del NPU
-# 0.30 detecta mejor señales impresas (menos textura que señales reales)
-DETECTION_CONFIDENCE = 0.30
+DETECTION_CONFIDENCE = 0.28   # bajo para detectar señales impresas
+
+# Filtro temporal: cuántos frames consecutivos necesita una detección
+# para ser "confirmada" — elimina falsos positivos de un solo frame
+DETECTION_MIN_FRAMES = 2
 
 # Nombres de clases COCO que interesan al TMR
 # (deben coincidir con el modelo cargado en el IMX500)

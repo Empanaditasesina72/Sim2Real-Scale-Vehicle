@@ -20,7 +20,7 @@ from hardware.camera_manager import Detection
 from config import (
     CAMERA_WIDTH, CAMERA_HEIGHT,
     STOP_SIGN_REAL_HEIGHT_M, CAMERA_FOCAL_LENGTH_PX,
-    DETECTION_CONFIDENCE,
+    DETECTION_CONFIDENCE, DETECTION_MIN_FRAMES,
     OVERTAKE_LANE_RATIO, OVERTAKE_MIN_BBOX_AREA, OVERTAKE_TRIGGER_Y_MIN,
     PARK_GAP_CAMERA_ZONE,
 )
@@ -37,12 +37,21 @@ class ObjectDetector:
     Interpreta las detecciones del IMX500 y devuelve eventos semánticos
     para el controlador autónomo.
 
+    Incluye filtro temporal: una detección solo se confirma si aparece
+    en DETECTION_MIN_FRAMES frames consecutivos. Elimina falsos positivos.
+
     Uso:
         od = ObjectDetector()
         result = od.analyze(detections, frame)
         if result.stop_distance_mm:
             ...
     """
+
+    def __init__(self):
+        # Contadores por etiqueta: cuántos frames consecutivos fue detectada
+        self._consecutive: dict[str, int] = {
+            "STOP": 0, "SEMAFORO": 0, "PERSONA": 0, "AUTO": 0
+        }
 
     @dataclass
     class AnalysisResult:
@@ -79,38 +88,37 @@ class ObjectDetector:
         tof_distance_mm : float | None
             Lectura actual del VL53L0X (para confirmar distancia de STOP).
         """
-        result = self.AnalysisResult()
+        result      = self.AnalysisResult()
+        seen_labels = set()
 
         for det in detections:
             if det.confidence < DETECTION_CONFIDENCE:
                 continue
 
+            seen_labels.add(det.label)
+
             if det.label == "STOP":
-                result.stop_sign_detected = True
-                result.stop_sign_bbox = (det.x1, det.y1, det.x2, det.y2)
-
-                # Distancia por bbox (si disponible)
-                dist_bbox = det.estimated_distance_m()
-                if dist_bbox is not None:
-                    dist_mm_bbox = dist_bbox * 1000
-
-                    # Si el ToF está disponible y en rango útil, preferirlo
-                    if tof_distance_mm is not None and tof_distance_mm < 1200:
-                        result.stop_sign_distance_mm = tof_distance_mm
-                    else:
-                        result.stop_sign_distance_mm = dist_mm_bbox
+                # Verificación extra de color rojo en el bbox — evita falsos positivos
+                if frame is not None and self._has_red_color(frame, det):
+                    result.stop_sign_bbox = (det.x1, det.y1, det.x2, det.y2)
+                    dist_bbox = det.estimated_distance_m()
+                    if dist_bbox is not None:
+                        if tof_distance_mm is not None and tof_distance_mm < 1200:
+                            result.stop_sign_distance_mm = tof_distance_mm
+                        else:
+                            result.stop_sign_distance_mm = dist_bbox * 1000
 
             elif det.label == "SEMAFORO":
-                result.traffic_light = self._classify_traffic_light(frame, det)
+                tl = self._classify_traffic_light(frame, det)
+                if tl.color != "unknown":
+                    result.traffic_light = tl
 
             elif det.label == "PERSONA":
                 result.person_detected = True
 
             elif det.label == "AUTO":
-                result.car_detected = True
                 bbox = (det.x1, det.y1, det.x2, det.y2)
                 area = det.width * det.height
-                # Guardar el auto más grande (más cercano)
                 if result.car_bbox is None:
                     result.car_bbox = bbox
                 else:
@@ -119,28 +127,70 @@ class ObjectDetector:
                     if area > prev_area:
                         result.car_bbox = bbox
 
-        # Distancia al objeto más cercano (para emergencia)
+        # ── Filtro temporal: actualizar contadores ────────────────
+        for label in self._consecutive:
+            if label in seen_labels:
+                self._consecutive[label] = min(
+                    self._consecutive[label] + 1, DETECTION_MIN_FRAMES + 2)
+            else:
+                self._consecutive[label] = 0
+
+        # Solo confirmar si lleva N frames consecutivos
+        def confirmed(label: str) -> bool:
+            return self._consecutive[label] >= DETECTION_MIN_FRAMES
+
+        result.stop_sign_detected = (result.stop_sign_bbox is not None
+                                     and confirmed("STOP"))
+        result.car_detected = (result.car_bbox is not None
+                               and confirmed("AUTO"))
+
+        # Distancia al objeto más cercano
         if tof_distance_mm is not None:
             result.closest_object_mm = tof_distance_mm
 
         # ── Clasificar posición del auto ──────────────────────────
         if result.car_bbox is not None:
             x1, y1, x2, y2 = result.car_bbox
-            cx   = (x1 + x2) / 2
-            area = (x2 - x1) * (y2 - y1)
+            cx      = (x1 + x2) / 2
+            area    = (x2 - x1) * (y2 - y1)
             frame_cx = CAMERA_WIDTH / 2
 
-            # Obstáculo en carril: cerca del centro y suficientemente grande
             result.car_in_lane = (
                 abs(cx - frame_cx) < CAMERA_WIDTH * OVERTAKE_LANE_RATIO
                 and area >= OVERTAKE_MIN_BBOX_AREA
                 and y2 >= OVERTAKE_TRIGGER_Y_MIN
             )
-
-            # Auto en zona lateral derecha (detección de espacio para parking)
             result.car_in_park_zone = cx > CAMERA_WIDTH * PARK_GAP_CAMERA_ZONE
 
         return result
+
+    # ----------------------------------------------------------
+    # Verificación de color rojo en señal STOP
+    # ----------------------------------------------------------
+    def _has_red_color(self, frame: np.ndarray, det: Detection) -> bool:
+        """
+        Verifica que el bbox de la señal STOP contiene suficiente rojo.
+        Filtra señales impresas con colores equivocados o falsos positivos.
+        Retorna True si al menos el 8% de los píxeles del bbox son rojos.
+        """
+        pad = 4
+        x1 = max(0, det.x1 + pad)
+        y1 = max(0, det.y1 + pad)
+        x2 = min(frame.shape[1] - 1, det.x2 - pad)
+        y2 = min(frame.shape[0] - 1, det.y2 - pad)
+        if x2 <= x1 or y2 <= y1:
+            return True   # bbox inválido, aceptar de todas formas
+
+        roi = frame[y1:y2, x1:x2]
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+        # Rojo en HSV tiene dos rangos (0-10 y 160-180)
+        mask1 = cv2.inRange(hsv, np.array([0,  80, 80]),
+                                 np.array([10, 255, 255]))
+        mask2 = cv2.inRange(hsv, np.array([155, 80, 80]),
+                                 np.array([180, 255, 255]))
+        red_ratio = (np.sum(mask1 > 0) + np.sum(mask2 > 0)) / roi.size
+        return red_ratio >= 0.06   # al menos 6% de píxeles rojos
 
     # ----------------------------------------------------------
     # Clasificación de semáforos por HSV en el bbox

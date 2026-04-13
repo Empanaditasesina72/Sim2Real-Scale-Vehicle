@@ -31,6 +31,12 @@ from config import (
     CAMERA_WIDTH,
     CAMERA_HEIGHT,
     CAMERA_FPS,
+    CAMERA_AWB_MODE,
+    CAMERA_CONTRAST,
+    CAMERA_SATURATION,
+    CAMERA_SHARPNESS,
+    CAMERA_DENOISE,
+    CAMERA_BUFFERS,
     DETECTION_CONFIDENCE,
     CLASSES_OF_INTEREST,
     STOP_SIGN_REAL_HEIGHT_M,
@@ -98,8 +104,20 @@ class CameraManager:
 
         cfg = self._picam2.create_preview_configuration(
             main={"format": "BGR888", "size": (CAMERA_WIDTH, CAMERA_HEIGHT)},
-            controls={"FrameRate": CAMERA_FPS},
-            buffer_count=2,          # mínimo para no saturar RAM
+            controls={
+                "FrameRate"          : CAMERA_FPS,
+                # Balance de blancos — Indoor corrige el tono azulado en interiores
+                "AwbEnable"          : True,
+                "AwbMode"            : CAMERA_AWB_MODE,
+                # Exposición automática
+                "AeEnable"           : True,
+                # Calidad de imagen para detección
+                "Contrast"           : CAMERA_CONTRAST,
+                "Saturation"         : CAMERA_SATURATION,
+                "Sharpness"          : CAMERA_SHARPNESS,
+                "NoiseReductionMode" : CAMERA_DENOISE,
+            },
+            buffer_count=CAMERA_BUFFERS,
         )
         self._picam2.configure(cfg)
 
@@ -119,8 +137,19 @@ class CameraManager:
     # ------------------------------------------------------------------
     def start(self):
         self._picam2.start()
-        # Dar tiempo al IMX500 para cargar el modelo en el NPU
-        time.sleep(2.0)
+        # Dar tiempo al IMX500 para cargar modelo y al AWB para estabilizarse
+        time.sleep(3.0)
+
+        # Intentar activar autofoco continuo (solo en cámaras con VCM)
+        try:
+            self._picam2.set_controls({
+                "AfMode"  : 2,   # Continuous autofocus
+                "AfSpeed" : 1,   # Fast
+            })
+            print("[CAM] Autoenfoque continuo activado")
+        except Exception:
+            print("[CAM] Autoenfoque no disponible — enfoque fijo")
+
         self._build_class_map()
 
         self._stop_event.clear()
