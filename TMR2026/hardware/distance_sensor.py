@@ -16,13 +16,15 @@ Cableado:
 import threading
 import time
 
-import RPi.GPIO as GPIO
+import lgpio
 
 from config import (
     PIN_TOF_XSHUT_FRONT, PIN_TOF_XSHUT_REAR,
     TOF_ADDR_FRONT, TOF_ADDR_REAR,
     TOF_TIMING_BUDGET_US, TOF_MAX_RANGE_MM, TOF_POLL_INTERVAL_S,
 )
+
+_CHIP = 4   # GPIO chip Pi 5
 
 
 class DistanceSensor:
@@ -35,12 +37,10 @@ class DistanceSensor:
         self._front = None
         self._rear  = None
 
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
-        GPIO.setup(PIN_TOF_XSHUT_FRONT, GPIO.OUT)
-        GPIO.setup(PIN_TOF_XSHUT_REAR,  GPIO.OUT)
-        GPIO.output(PIN_TOF_XSHUT_FRONT, GPIO.LOW)
-        GPIO.output(PIN_TOF_XSHUT_REAR,  GPIO.LOW)
+        # Abrir chip GPIO para los pines XSHUT
+        self._h = lgpio.gpiochip_open(_CHIP)
+        lgpio.gpio_claim_output(self._h, PIN_TOF_XSHUT_FRONT, 0, 0)  # LOW
+        lgpio.gpio_claim_output(self._h, PIN_TOF_XSHUT_REAR,  0, 0)  # LOW
 
         try:
             import adafruit_vl53l0x
@@ -49,7 +49,7 @@ class DistanceSensor:
             i2c = ExtendedI2C(4)  # /dev/i2c-4 (GPIO 22=SCL, GPIO 23=SDA)
 
             # Sensor delantero → cambiar dirección a 0x30
-            GPIO.output(PIN_TOF_XSHUT_FRONT, GPIO.HIGH)
+            lgpio.gpio_write(self._h, PIN_TOF_XSHUT_FRONT, 1)
             time.sleep(0.1)
             front = adafruit_vl53l0x.VL53L0X(i2c)
             front.set_address(TOF_ADDR_FRONT)
@@ -57,7 +57,7 @@ class DistanceSensor:
             self._front = front
 
             # Sensor trasero → queda en 0x29
-            GPIO.output(PIN_TOF_XSHUT_REAR, GPIO.HIGH)
+            lgpio.gpio_write(self._h, PIN_TOF_XSHUT_REAR, 1)
             time.sleep(0.1)
             rear = adafruit_vl53l0x.VL53L0X(i2c)
             rear.measurement_timing_budget = TOF_TIMING_BUDGET_US
@@ -68,8 +68,8 @@ class DistanceSensor:
 
         except Exception as e:
             # Liberar XSHUT para que no queden en LOW indefinidamente
-            GPIO.output(PIN_TOF_XSHUT_FRONT, GPIO.HIGH)
-            GPIO.output(PIN_TOF_XSHUT_REAR,  GPIO.HIGH)
+            lgpio.gpio_write(self._h, PIN_TOF_XSHUT_FRONT, 1)
+            lgpio.gpio_write(self._h, PIN_TOF_XSHUT_REAR,  1)
             print(f"[TOF] Sensores no disponibles ({e}) — continuando sin ToF")
 
         self._front_mm: float | None = None
@@ -91,6 +91,9 @@ class DistanceSensor:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=1.0)
+        lgpio.gpio_free(self._h, PIN_TOF_XSHUT_FRONT)
+        lgpio.gpio_free(self._h, PIN_TOF_XSHUT_REAR)
+        lgpio.gpiochip_close(self._h)
 
     # ----------------------------------------------------------
     @property

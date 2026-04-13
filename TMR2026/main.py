@@ -20,7 +20,7 @@ import signal
 import argparse
 
 import cv2
-import RPi.GPIO as GPIO
+import lgpio
 
 # --display : abre ventana de cámara en el HDMI de la Pi
 #   Uso: python3 main.py --display
@@ -62,8 +62,6 @@ class CarritoTMR:
     MODE_COOLDOWN = 0.4   # segundos mínimos entre cambios de modo
 
     def __init__(self):
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
         self._setup_leds()
 
         print("[INIT] Inicializando hardware...")
@@ -357,19 +355,20 @@ class CarritoTMR:
 
     def _setup_leds(self):
         try:
+            self._led_h = lgpio.gpiochip_open(4)
             for pin in (PIN_LED_STOP, PIN_LED_STATUS):
-                GPIO.setup(pin, GPIO.OUT)
-                GPIO.output(pin, GPIO.LOW)
+                lgpio.gpio_claim_output(self._led_h, pin, 0, 0)
             self._leds_ok = True
         except Exception as e:
             print(f"[WARN] LEDs no disponibles (GPIO): {e}")
+            self._led_h  = None
             self._leds_ok = False
 
     def _set_led(self, pin: int, state):
-        if not getattr(self, "_leds_ok", False):
+        if not self._leds_ok or self._led_h is None:
             return
         try:
-            GPIO.output(pin, GPIO.HIGH if bool(state) else GPIO.LOW)
+            lgpio.gpio_write(self._led_h, pin, 1 if bool(state) else 0)
         except Exception:
             pass
 
@@ -386,9 +385,14 @@ class CarritoTMR:
         self.sensor.stop()
         self.camera.stop()
         self.motor.cleanup()
-        for pin in (PIN_LED_STOP, PIN_LED_STATUS):
-            GPIO.output(pin, GPIO.LOW)
-        GPIO.cleanup()
+        if self._leds_ok and self._led_h is not None:
+            for pin in (PIN_LED_STOP, PIN_LED_STATUS):
+                try:
+                    lgpio.gpio_write(self._led_h, pin, 0)
+                    lgpio.gpio_free(self._led_h, pin)
+                except Exception:
+                    pass
+            lgpio.gpiochip_close(self._led_h)
         print("[SYS] Listo.")
 
 

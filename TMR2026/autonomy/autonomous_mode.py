@@ -22,7 +22,7 @@ import time
 from enum import Enum, auto
 from typing import Optional
 
-import RPi.GPIO as GPIO
+import lgpio as _lgpio_mod
 
 from config import (
     SPEED_STRAIGHT, SPEED_CURVE, SPEED_APPROACH,
@@ -383,7 +383,4 @@ class AutonomousController:
 
     @staticmethod
     def _set_led(pin: int, state: bool):
-        try:
-            GPIO.output(pin, GPIO.HIGH if state else GPIO.LOW)
-        except Exception:
-            pass
+        pass   # LEDs gestionados por main.py vía lgpio
