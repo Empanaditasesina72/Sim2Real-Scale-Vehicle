@@ -211,6 +211,10 @@ class VisionModule:
         self._state      = VisionState()
         self._state_lock = threading.Lock()
 
+        # Frame BGR más reciente (para lane detector externo)
+        self._latest_frame: Optional[np.ndarray] = None
+        self._frame_lock   = threading.Lock()
+
         # Hilo de captura
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -281,6 +285,17 @@ class VisionModule:
         """
         with self._state_lock:
             return self._state
+
+    def get_latest_frame(self) -> Optional[np.ndarray]:
+        """
+        Retorna el frame BGR más reciente capturado por el NPU.
+
+        Thread-safe, no bloqueante.  Retorna None hasta que el primer frame
+        esté disponible (~2 s tras start() mientras estabiliza AE/AWB).
+        Usar este frame para el detector de carril (lane_detector.process).
+        """
+        with self._frame_lock:
+            return self._latest_frame
 
     def recalibrate_lighting(self) -> None:
         """
@@ -357,7 +372,7 @@ class VisionModule:
 
         cfg = self._picam2.create_preview_configuration(
             main={
-                "format": "RGB888",                     # en memoria = BGR sin cvtColor
+                "format": "BGR888",                     # OpenCV nativo — sin cvtColor
                 "size":   (_STREAM_W, _STREAM_H),
             },
             controls={
@@ -475,6 +490,10 @@ class VisionModule:
                 continue
 
             self._capture_fails = 0
+
+            # Publicar frame para el lane detector externo
+            with self._frame_lock:
+                self._latest_frame = frame
 
             raw_dets   = self._parse_npu(meta, frame.shape)
             conf_dets  = self._apply_temporal_filter(raw_dets)
