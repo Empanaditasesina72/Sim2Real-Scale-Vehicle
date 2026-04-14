@@ -59,12 +59,12 @@ _YOLO11N_MODEL = next(
     (m for m in _MODEL_CANDIDATES if _os.path.exists(m)),
     _MODEL_CANDIDATES[-1],   # fallback aunque no exista — error claro al iniciar
 )
-_STREAM_W        = 2028
-_STREAM_H        = 1520
+_STREAM_W        = 640    # stream a 640×480 — NPU corre igual, sin resize en CPU
+_STREAM_H        = 480
 _FPS             = 30
 
-# Longitud focal estimada para IMX500 a 2028 px de ancho (~75° FOV diagonal)
-_FOCAL_LENGTH_PX = 1562.0
+# Longitud focal estimada para IMX500 a 640 px de ancho (~75° FOV diagonal)
+_FOCAL_LENGTH_PX = 490.0
 
 # Clases COCO de interés → etiqueta interna TMR
 _COCO_CLASSES: dict[str, str] = {
@@ -78,7 +78,7 @@ _COCO_CLASSES: dict[str, str] = {
 _AWB_WARMUP_S = 1.5   # segundos de estabilización antes de bloquear
 
 # Filtro temporal
-_CONF_THRESHOLD  = 0.28   # umbral mínimo de confianza del NPU
+_CONF_THRESHOLD  = 0.18   # umbral mínimo — EfficientDet da scores más bajos que YOLO
 _TEMPORAL_FRAMES = 2      # frames consecutivos para confirmar una detección
 
 # Distancia STOP
@@ -462,7 +462,13 @@ class VisionModule:
                         if coco_name in lower:
                             self._class_map[idx] = friendly
                             break
-            log.debug("Mapa de clases: %s", self._class_map)
+            if self._class_map:
+                print(f"[VISION] Clases mapeadas: {self._class_map}")
+            else:
+                print("[VISION] ⚠ Mapa de clases vacío — modelo sin etiquetas legibles")
+                print("[VISION]   Primeras 10 etiquetas del modelo:",
+                      [intrinsics.labels[i] for i in range(min(10, len(intrinsics.labels)))]
+                      if intrinsics and intrinsics.labels else "N/A")
         except Exception as exc:
             log.warning("No se pudo construir mapa de clases: %s", exc)
 
@@ -507,6 +513,16 @@ class VisionModule:
                 self._latest_frame = frame
 
             raw_dets   = self._parse_npu(meta, frame.shape)
+
+            # Debug: mostrar detecciones crudas cada 60 frames (~2 s)
+            if hasattr(self, '_dbg_frame_count'):
+                self._dbg_frame_count += 1
+            else:
+                self._dbg_frame_count = 0
+            if self._dbg_frame_count % 60 == 0 and raw_dets:
+                print(f"[VISION] Detecciones NPU: "
+                      + ", ".join(f"{d.label}({d.confidence:.2f})" for d in raw_dets))
+
             conf_dets  = self._apply_temporal_filter(raw_dets)
             new_state  = self._analyze(conf_dets, frame)
             self._update_fps_watchdog(new_state)

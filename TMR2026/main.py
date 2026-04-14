@@ -135,9 +135,7 @@ class CarritoTMR:
             lane = LaneData(0, 0, False, 0, SERVO_CENTER_ANGLE)
             obj  = ObjectDetector.AnalysisResult()
             if raw_frame is not None:
-                # Redimensionar al tamaño de config para el detector de carril
-                lane_frame = cv2.resize(raw_frame, (CAMERA_WIDTH, CAMERA_HEIGHT))
-                lane = self.lane_detector.process(lane_frame)
+                lane = self.lane_detector.process(raw_frame)
                 obj  = _vs_to_obj(vs)
 
             self._handle_mode_transitions(gp)
@@ -300,15 +298,11 @@ class CarritoTMR:
             print("\r[VIS] Esperando frame de cámara...", end="", flush=True)
             return
 
-        # Escalar al tamaño de trabajo para la visualización
-        vis = cv2.resize(raw_frame, (CAMERA_WIDTH, CAMERA_HEIGHT))
+        # Stream ya es 640×480 — no necesita resize
+        vis = raw_frame.copy()
         H, W = vis.shape[:2]
 
-        # ── Bounding boxes (raw_detections ya están en coord. del frame original) ──
-        # Escalar coords de 2028×1520 → 640×480
-        sx = CAMERA_WIDTH  / raw_frame.shape[1]
-        sy = CAMERA_HEIGHT / raw_frame.shape[0]
-
+        # ── Bounding boxes del NPU ────────────────────────────────
         COLOR_MAP = {
             "STOP":     (0,   0,   255),
             "SEMAFORO": (0,   200, 255),
@@ -322,11 +316,9 @@ class CarritoTMR:
                 if lc == "red":     color = (0,   0,   255)
                 elif lc == "green": color = (0,   255, 0  )
                 elif lc == "yellow":color = (0,   220, 220)
-            x1 = int(det.x1 * sx); y1 = int(det.y1 * sy)
-            x2 = int(det.x2 * sx); y2 = int(det.y2 * sy)
-            cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
+            cv2.rectangle(vis, (det.x1, det.y1), (det.x2, det.y2), color, 2)
             cv2.putText(vis, f"{det.label} {det.confidence:.0%}",
-                        (x1, max(y1 - 6, 12)),
+                        (det.x1, max(det.y1 - 6, 12)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 
         # ── Centro del carril ────────────────────────────────────
