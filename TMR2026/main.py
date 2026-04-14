@@ -1,447 +1,426 @@
 # -*- coding: utf-8 -*-
 """
-main.py — Sistema TMR 2026.
+main.py — Punto de entrada del vehículo autónomo TMR 2026.
+Raspberry Pi 5 · Sony IMX500 · IBT-2 · PCA9685 · VL53L0X
 
-Botones PS4 / Xbox:
-  Cuadrado / X  → Autónomo  (TOGGLE — presionar de nuevo apaga)
-  Círculo  / B  → Visión    (cámara encendida, motores OFF)
-  Por defecto   → Manual
+Arquitectura de hilos:
+  CameraStream  → hilo demonio, actualiza frame BGR a 30 FPS
+  SignDetector  → hilo demonio, inferencia YOLO a ~12 FPS
+  DistanceSensor→ hilo demonio, polling VL53L0X a 50 Hz
+  Main loop     → 50 Hz: gamepad + FSM + servo + motor
 
-Manual:
-  Palanca izquierda X → servo (dirección)
-  R2 (gatillo)        → motor adelante (progresivo)
-  L2 (gatillo)        → reversa suave
+Modos:
+  STANDBY    → Motor OFF, servo al centro. Espera al mando.
+  MANUAL     → Palanca izq → servo | R2 → avance | L2 → reversa
+  AUTONOMOUS → FSM de 5 estados (CRUCERO/PRECAUCIÓN/FRENADO/ESPERA/REANUDAR)
+
+Botones gamepad (PS4/Xbox genérico):
+  Cuadrado / X  → Toggle AUTONOMOUS (activa/desactiva)
+  Cruz    / A   → MANUAL
+  Círculo / B   → Modo VISION (cámara ON, motores OFF, debug)
+  Start         → Emergencia: freno inmediato + MANUAL
 """
 
 import os
 import sys
 import time
 import signal
-import argparse
+import threading
+from typing import Optional
 
 import cv2
-import lgpio
 
-# --display : abre ventana de cámara en el HDMI de la Pi
-#   Uso: python3 main.py --display
-_ap = argparse.ArgumentParser()
-_ap.add_argument("--display", action="store_true",
-                 help="Mostrar ventana de cámara en el monitor de la Pi")
-_args, _ = _ap.parse_known_args()
-
-_HAS_DISPLAY = _args.display
-if _HAS_DISPLAY:
+# ── Flag de display (--display para abrir ventana) ────────────────────────────
+_DISPLAY = "--display" in sys.argv
+if _DISPLAY:
     os.environ.setdefault("DISPLAY", ":0")
 
-from config import (
-    PIN_LED_STOP, PIN_LED_STATUS,
-    SERVO_CENTER_ANGLE,
-    BTN_MANUAL, BTN_VISION, BTN_AUTONOMOUS, BTN_PARKING,
-    CAMERA_WIDTH, CAMERA_HEIGHT,
-    SPEED_STRAIGHT, SPEED_CURVE,
-)
-from hardware.motor_driver    import MotorDriver
-from hardware.steering_driver import SteeringDriver
-from hardware.distance_sensor import DistanceSensor
-from control.gamepad_reader   import GamepadReader
-from vision.lane_detector     import LaneData
-from vision.object_detector   import ObjectDetector, TrafficLightState
-from vision_module            import VisionModule, VisionState, _MAIN_W, _MAIN_H, _LORES_W, _LORES_H
-from autonomy.autonomous_mode import AutonomousController
+# ─────────────────────────────────────────────────────────────────────────────
+# CONSTANTES HARDWARE (NO MODIFICAR SIN CAMBIAR EL CABLEADO)
+# ─────────────────────────────────────────────────────────────────────────────
+MOTOR_RPWM        = 18      # GPIO BCM
+MOTOR_LPWM        = 13      # GPIO BCM
+SERVO_I2C_BUS     = 3       # Bus I2C via dtoverlay (GPIO 0=SDA, 1=SCL)
+SERVO_CHANNEL     = 0       # Canal PCA9685
+SERVO_MIN_PULSE   = 500     # µs → 0°
+SERVO_MAX_PULSE   = 2500    # µs → 180°
+SERVO_CENTER      = 90.0    # grados
+SERVO_MIN         = 45.0    # límite físico izquierda
+SERVO_MAX         = 135.0   # límite físico derecha
+TOF_I2C_BUS       = 4       # Bus I2C via dtoverlay (GPIO 23=SDA, 22=SCL)
+TOF_XSHUT_PIN     = 17      # GPIO XSHUT del VL53L0X frontal
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONSTANTES DE COMPORTAMIENTO
+# ─────────────────────────────────────────────────────────────────────────────
+LOOP_HZ           = 50      # Hz del bucle de control principal
+CAMERA_W          = 640
+CAMERA_H          = 480
+CAMERA_FPS        = 30
+AWB_WARMUP_S      = 2.0     # segundos estabilización AE/AWB
+YOLO_MODEL        = "weights/tmr_signs.pt"
+YOLO_CONF         = 0.55
+YOLO_IMGSZ        = 320
+
+# PID de dirección (error en px → corrección en grados)
+PID_KP            = 0.08    # Subir si el coche oscila poco → aumentar
+PID_KI            = 0.002   # Anti-windup a long-term drift
+PID_KD            = 0.025   # Amortiguación → aumentar si el servo vibra
+PID_OUT_MIN       = -(SERVO_CENTER - SERVO_MIN)   # -45°
+PID_OUT_MAX       =  (SERVO_MAX - SERVO_CENTER)   # +45°
+
+# Gamepad (PS4 / Xbox genérico)
+BTN_AUTONOMOUS    = 2       # Cuadrado / X
+BTN_MANUAL        = 0       # Cruz / A
+BTN_VISION        = 1       # Círculo / B
+BTN_EMERGENCY     = 9       # Start / Options
+AXIS_STEER        = 0       # Palanca izquierda X  (−1=izq, +1=der)
+AXIS_THROTTLE     = 5       # Gatillo R2           (−1=libre, +1=fondo)
+AXIS_BRAKE        = 2       # Gatillo L2
+DEADBAND          = 0.08
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IMPORTAR MÓDULOS DEL PROYECTO
+# ─────────────────────────────────────────────────────────────────────────────
+from hardware.motor            import MotorDriver
+from hardware.steering_driver  import SteeringDriver
+from hardware.distance_sensor  import DistanceSensor
+from vision.camera_stream      import CameraStream
+from vision.lane_pipeline      import LanePipeline, LaneResult
+from vision.sign_detector      import SignDetector
+from control.pid_controller    import PIDController
+from control.fsm               import AutonomousFSM, FSMState
 
 
-# ── Adapter: VisionState → ObjectDetector.AnalysisResult ──────────────────
-def _vs_to_obj(vs: VisionState) -> ObjectDetector.AnalysisResult:
+# ─────────────────────────────────────────────────────────────────────────────
+# CLASE PRINCIPAL
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VehicleTMR:
     """
-    Convierte el estado del VisionModule al formato que espera
-    AutonomousController.  Permite usar VisionModule como drop-in
-    de CameraManager + ObjectDetector sin modificar la FSM autónoma.
+    Controlador completo del vehículo TMR 2026.
+
+    Integra hardware, visión y FSM en un único bucle de control a 50 Hz.
+    El procesamiento de imagen ocurre en hilos separados — el bucle de
+    control NUNCA espera a la visión.
     """
-    r = ObjectDetector.AnalysisResult()
-    r.stop_sign_detected    = vs.stop_detected
-    r.stop_sign_distance_mm = vs.stop_distance_mm
-    r.stop_sign_bbox        = vs.stop_bbox
-    r.person_detected       = vs.person_detected
-    r.car_detected          = vs.car_detected
-    r.car_bbox              = vs.car_bbox
-    r.car_in_lane           = vs.car_in_lane
-    r.car_in_park_zone      = vs.car_in_park_zone
-    if vs.traffic_light_color not in ("unknown", ""):
-        r.traffic_light = TrafficLightState(
-            color=vs.traffic_light_color,
-            confidence=vs.traffic_light_conf,
-        )
-    return r
 
+    class Mode:
+        STANDBY    = "STANDBY"
+        MANUAL     = "MANUAL"
+        VISION     = "VISION"
+        AUTONOMOUS = "AUTONOMOUS"
 
-def _vs_to_lane(vs: VisionState) -> LaneData:
-    """
-    Convierte el estado de carril del VisionModule al formato LaneData
-    que espera AutonomousController. El error y la confianza vienen del
-    detector de histograma interno (plano Y del stream lores 640×480).
-    """
-    is_curve = abs(vs.lane_error) > 40
-    speed    = SPEED_CURVE if is_curve else SPEED_STRAIGHT
-    return LaneData(
-        error_px          = vs.lane_error,
-        curvature_rad     = 0.0,
-        is_curve          = is_curve,
-        confidence        = vs.lane_confidence,
-        suggested_speed   = speed,
-        crosswalk_detected = False,
-    )
-
-
-class VehicleMode:
-    STANDBY    = "STANDBY"
-    MANUAL     = "MANUAL"
-    VISION     = "VISION"
-    AUTONOMOUS = "AUTONOMOUS"
-    PARKING    = "PARKING"
-
-
-class CarritoTMR:
-
-    LOOP_HZ = 50
-    MODE_COOLDOWN = 0.4   # segundos mínimos entre cambios de modo
+    MODE_COOLDOWN_S = 0.4   # mínimo entre cambios de modo (anti-rebote)
 
     def __init__(self):
-        self._setup_leds()
+        print("=" * 55)
+        print("  TMR 2026 — Inicializando hardware...")
+        print("=" * 55)
 
-        print("[INIT] Inicializando hardware...")
-        self.motor    = MotorDriver()
+        # ── Hardware ──────────────────────────────────────────────
+        self.motor    = MotorDriver(pin_rpwm=MOTOR_RPWM, pin_lpwm=MOTOR_LPWM)
         self.steering = SteeringDriver()
         self.sensor   = DistanceSensor()
-        self.vision   = VisionModule(display_overlay=_HAS_DISPLAY)
-        self.gamepad  = GamepadReader()
 
-        self.autonomous    = AutonomousController(self.motor, self.steering)
+        # ── Visión ────────────────────────────────────────────────
+        self.camera = CameraStream(
+            width=CAMERA_W, height=CAMERA_H,
+            fps=CAMERA_FPS, awb_warmup_s=AWB_WARMUP_S,
+        )
+        self.lane_pipe = LanePipeline(
+            frame_w=CAMERA_W, frame_h=CAMERA_H, debug=_DISPLAY
+        )
+        self.sign_det = SignDetector(
+            model_path=YOLO_MODEL, conf=YOLO_CONF, imgsz=YOLO_IMGSZ
+        )
 
-        self._mode           = VehicleMode.STANDBY
-        self._running        = True
-        self._dt             = 1.0 / self.LOOP_HZ
-        self._last_t         = time.monotonic()
-        self._last_mode_change = 0.0   # timestamp del último cambio de modo
+        # ── PID y FSM ─────────────────────────────────────────────
+        self.pid = PIDController(
+            kp=PID_KP, ki=PID_KI, kd=PID_KD,
+            setpoint=0.0,
+            output_limits=(PID_OUT_MIN, PID_OUT_MAX),
+            integral_limits=(-25.0, 25.0),
+        )
+        self.fsm = AutonomousFSM(self.motor, self.steering, self.pid)
+
+        # ── Gamepad (pygame) ──────────────────────────────────────
+        self._joystick = None
+        self._init_gamepad()
+
+        # ── Estado interno ────────────────────────────────────────
+        self._mode            = self.Mode.STANDBY
+        self._running         = True
+        self._last_mode_t     = 0.0
+        self._last_lane       = LaneResult(error_px=0.0, confidence=0.0)
+        self._btn_prev: dict  = {}
 
         signal.signal(signal.SIGINT,  self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
 
-        print("[INIT] Listo. Esperando mando Bluetooth...")
+        print("[INIT] Hardware listo. Esperando mando Bluetooth...")
 
-    # ----------------------------------------------------------
-    def run(self):
+    # ─── Arranque y bucle principal ───────────────────────────────────────────
+
+    def run(self) -> None:
+        # Arrancar hilos de hardware y visión
         self.sensor.start()
-        self.vision.start()
-        self.gamepad.start()
+        self.camera.start()
+        self.sign_det.start()
+
+        print(f"[MAIN] Bucle de control a {LOOP_HZ} Hz iniciado.")
+        dt = 1.0 / LOOP_HZ
+        t_last = time.monotonic()
+
         try:
-            self._main_loop()
+            while self._running:
+                now   = time.monotonic()
+                dt    = now - t_last
+                t_last = now
+
+                self._process_gamepad()
+                self._update_vision()
+                self._run_mode(dt)
+
+                elapsed = time.monotonic() - now
+                sleep   = max(0.0, (1.0 / LOOP_HZ) - elapsed)
+                if sleep > 0:
+                    time.sleep(sleep)
+
         finally:
             self._shutdown()
 
-    # ----------------------------------------------------------
-    def _main_loop(self):
-        while self._running:
-            now = time.monotonic()
-            self._dt     = now - self._last_t
-            self._last_t = now
+    # ─── Gamepad ─────────────────────────────────────────────────────────────
 
-            gp        = self.gamepad.state
-            tof       = self.sensor.distance_mm
-            vs        = self.vision.get_state()
-            raw_frame = self.vision.get_latest_frame()
-
-            # Carril y objetos ya vienen procesados por VisionModule
-            lane = _vs_to_lane(vs)
-            obj  = _vs_to_obj(vs)
-
-            self._handle_mode_transitions(gp)
-
-            match self._mode:
-                case VehicleMode.STANDBY:
-                    self._standby(gp)
-                case VehicleMode.MANUAL:
-                    self._manual(gp)
-                case VehicleMode.VISION:
-                    self._vision(lane, obj, vs, tof, raw_frame)
-                case VehicleMode.AUTONOMOUS | VehicleMode.PARKING:
-                    self.autonomous.update(lane, obj, tof, self._dt)
-
-            elapsed = time.monotonic() - now
-            wait    = (1.0 / self.LOOP_HZ) - elapsed
-            if wait > 0:
-                time.sleep(wait)
-
-    # ----------------------------------------------------------
-    def _handle_mode_transitions(self, gp):
-        # Sin mando → STANDBY siempre
-        if not gp.connected:
-            if self._mode != VehicleMode.STANDBY:
-                print("\n[FSM] Mando desconectado → STANDBY")
-                self._safe_stop()
-                self._set_mode(VehicleMode.STANDBY)
-            return
-
-        # Cooldown para evitar cambios accidentales por botón rebotado
-        if time.monotonic() - self._last_mode_change < self.MODE_COOLDOWN:
-            # Vaciar colas de botones para que no se acumulen
-            for btn in (BTN_MANUAL, BTN_VISION, BTN_AUTONOMOUS, BTN_PARKING):
-                self.gamepad.consume_button(btn)
-            return
-
-        # ── Cuadrado / X → TOGGLE autónomo ──────────────────────
-        if self.gamepad.consume_button(BTN_AUTONOMOUS):
-            if self._mode == VehicleMode.AUTONOMOUS:
-                # Apagar autónomo → volver a manual
-                self.autonomous.deactivate()
-                self._set_mode(VehicleMode.MANUAL)
+    def _init_gamepad(self) -> None:
+        try:
+            import pygame
+            pygame.init()
+            pygame.joystick.init()
+            if pygame.joystick.get_count() > 0:
+                self._joystick = pygame.joystick.Joystick(0)
+                self._joystick.init()
+                print(f"[PAD] Mando conectado: {self._joystick.get_name()}")
             else:
-                self._safe_stop()
-                self._set_mode(VehicleMode.AUTONOMOUS)
-                self.autonomous.activate()
+                print("[PAD] Sin mando detectado — solo modo autónomo disponible.")
+        except Exception as e:
+            print(f"[PAD] pygame no disponible: {e}")
+
+    def _process_gamepad(self) -> None:
+        if self._joystick is None:
+            return
+        try:
+            import pygame
+            pygame.event.pump()
+        except Exception:
             return
 
-        # ── Círculo / B → Visión ────────────────────────────────
-        if self.gamepad.consume_button(BTN_VISION):
-            if self._mode != VehicleMode.VISION:
-                self._safe_stop()
-                self._set_mode(VehicleMode.VISION)
+        now = time.monotonic()
+        if now - self._last_mode_t < self.MODE_COOLDOWN_S:
+            return
+
+        def btn(idx: int) -> bool:
+            """True SOLO en el flanco de subida del botón."""
+            cur = bool(self._joystick.get_button(idx))
+            prev = self._btn_prev.get(idx, False)
+            self._btn_prev[idx] = cur
+            return cur and not prev
+
+        # Emergencia — tiene prioridad absoluta
+        if btn(BTN_EMERGENCY):
+            print("[PAD] EMERGENCIA — freno + MANUAL")
+            self.motor.brake()
+            self.fsm.deactivate()
+            self._set_mode(self.Mode.MANUAL)
+            return
+
+        # Cuadrado / X → Toggle AUTONOMOUS
+        if btn(BTN_AUTONOMOUS):
+            if self._mode == self.Mode.AUTONOMOUS:
+                self.fsm.deactivate()
+                self._set_mode(self.Mode.MANUAL)
             else:
-                # Presionar de nuevo → volver a manual
-                self._set_mode(VehicleMode.MANUAL)
+                self.motor.brake()
+                self._set_mode(self.Mode.AUTONOMOUS)
+                self.fsm.activate()
             return
 
-        # ── Cruz / A → Manual ───────────────────────────────────
-        if self.gamepad.consume_button(BTN_MANUAL):
-            self._safe_stop()
-            self._set_mode(VehicleMode.MANUAL)
+        # Cruz / A → MANUAL
+        if btn(BTN_MANUAL):
+            self.fsm.deactivate()
+            self._set_mode(self.Mode.MANUAL)
             return
 
-        # ── Triángulo / Y → Parking ─────────────────────────────
-        if self.gamepad.consume_button(BTN_PARKING):
-            if self._mode != VehicleMode.AUTONOMOUS:
-                self._safe_stop()
-                self._set_mode(VehicleMode.AUTONOMOUS)
-                self.autonomous.activate()
-            self.autonomous.trigger_parking()
+        # Círculo / B → VISION (debug, motores OFF)
+        if btn(BTN_VISION):
+            if self._mode == self.Mode.VISION:
+                self._set_mode(self.Mode.MANUAL)
+            else:
+                self.motor.brake()
+                self._set_mode(self.Mode.VISION)
             return
 
-    def _set_mode(self, new_mode: str):
-        if new_mode != self._mode:
-            print(f"\n[FSM] {self._mode} → {new_mode}")
-            if self._mode == VehicleMode.VISION and _HAS_DISPLAY:
+    def _set_mode(self, mode: str) -> None:
+        if mode != self._mode:
+            print(f"[MODE] {self._mode} → {mode}")
+            if self._mode == self.Mode.VISION and _DISPLAY:
                 cv2.destroyAllWindows()
-        self._mode = new_mode
-        self._last_mode_change = time.monotonic()
+        self._mode = mode
+        self._last_mode_t = time.monotonic()
 
-    # ----------------------------------------------------------
-    # STANDBY
-    # ----------------------------------------------------------
-    def _standby(self, gp):
-        if not gp.connected:
-            self._set_led(PIN_LED_STATUS, int(time.monotonic() * 2) % 2 == 0)
+    # ─── Actualización de visión (no bloqueante) ──────────────────────────────
+
+    def _update_vision(self) -> None:
+        """
+        Obtiene el frame más reciente y actualiza LanePipeline + SignDetector.
+        Nunca bloquea — si no hay frame nuevo, usa el resultado anterior.
+        """
+        frame = self.camera.get_frame()
+        if frame is None:
             return
 
-        # Motor desactivado — nunca moverse en STANDBY
-        self.motor.disable()
+        # Lane detection (rápido: ~10 ms)
+        self._last_lane = self.lane_pipe.process(frame)
 
-        # Mando conectado — LED parpadeo lento, espera que el usuario elija modo
-        self._set_led(PIN_LED_STATUS, int(time.monotonic()) % 2 == 0)
-        print("\r[STANDBY] Cruz=Manual  Círculo=Cámara  Cuadrado=Autónomo   ", end="", flush=True)
+        # Proveer frame al detector de señales (el hilo YOLO lo consumirá)
+        self.sign_det.update_frame(frame)
 
-        if self.gamepad.consume_button(BTN_MANUAL):
-            print()
-            self._set_mode(VehicleMode.MANUAL)
-            self._set_led(PIN_LED_STATUS, True)
-        elif self.gamepad.consume_button(BTN_VISION):
-            print()
-            self._set_mode(VehicleMode.VISION)
-        elif self.gamepad.consume_button(BTN_AUTONOMOUS):
-            print()
-            self._safe_stop()
-            self._set_mode(VehicleMode.AUTONOMOUS)
-            self.autonomous.activate()
+        # Actualizar entradas de la FSM
+        self.fsm.lane_error   = self._last_lane.error_px
+        self.fsm.lane_conf    = self._last_lane.confidence
+        self.fsm.lidar_mm     = self.sensor.front_mm
+        self.fsm.sign_visible = self.sign_det.has_any_sign()
 
-    # ----------------------------------------------------------
-    # MANUAL
-    # ----------------------------------------------------------
-    def _manual(self, gp):
-        """
-        Palanca izquierda X → dirección servo.
-        R2 → motor adelante progresivo con rampa suave.
-        L2 → reversa suave.
-        """
-        # ── Dirección — palanca izquierda X (eje 0) ──────────────
-        rango = SERVO_CENTER_ANGLE - 45   # ±45° desde centro
-        servo_angle = SERVO_CENTER_ANGLE + gp.steer * rango
-        self.steering.set_angle(servo_angle)
+    # ─── Modos de operación ───────────────────────────────────────────────────
 
-        # Debug: muestra steer y ángulo en terminal para verificar servo
-        print(f"\r[MAN] steer:{gp.steer:+.2f} servo:{servo_angle:.0f}°  "
-              f"R2:{gp.throttle:.2f} L2:{gp.brake:.2f}   ", end="", flush=True)
+    def _run_mode(self, dt: float) -> None:
+        match self._mode:
+            case self.Mode.STANDBY:
+                self._do_standby()
+            case self.Mode.MANUAL:
+                self._do_manual()
+            case self.Mode.VISION:
+                self._do_vision()
+            case self.Mode.AUTONOMOUS:
+                self.fsm.update(dt)
 
-        # ── Motor ─────────────────────────────────────────────────
-        if gp.brake > 0.05:
-            # L2 → reversa (funciona bien, sin cambios)
-            duty = max((gp.brake ** 2) * 50, 25.0)
-            self.motor.set_throttle(-duty)
-
-        elif gp.throttle > 0.05:
-            # R2 → rampa muy suave: 2%/tick (50 Hz → 150 ms para llegar a 10%)
-            # Máximo 50% con R2 a fondo para no saturar la batería
-            target = max((gp.throttle ** 1.5) * 50, 8.0)
-            current = abs(self.motor.duty)
-            ramped  = min(current + 2.0, target)
-            self.motor.set_throttle(ramped)
-
-        else:
-            self.motor.disable()
-
-    # ----------------------------------------------------------
-    # VISION TEST
-    # ----------------------------------------------------------
-    def _vision(self, lane, obj, vs: VisionState, tof_mm, raw_frame):
-        """
-        Motores OFF.  Debug de visión en tiempo real:
-          - Bounding boxes del NPU (STOP, semáforo, persona, auto)
-          - Centro de carril detectado
-          - Estado del semáforo, distancia ToF, confianza de carril, FPS
-        Presiona Círculo de nuevo para volver a Manual.
-        """
+    def _do_standby(self) -> None:
         self.motor.brake()
         self.steering.center()
-
-        if raw_frame is None:
-            print("\r[VIS] Esperando frame de cámara...", end="", flush=True)
+        if self._joystick is None:
             return
-
-        # Escalar 1280×720 → 640×360 para visualización (bboxes escalados también)
-        VIS_W, VIS_H = 640, 360
-        vis = cv2.resize(raw_frame, (VIS_W, VIS_H))
-        H, W = VIS_H, VIS_W
-        sx = VIS_W / _MAIN_W
-        sy = VIS_H / _MAIN_H
-
-        # ── Bounding boxes del NPU (coords en 1280×720, escalar a VIS) ───
-        COLOR_MAP = {
-            "STOP":     (0,   0,   255),
-            "SEMAFORO": (0,   200, 255),
-            "PERSONA":  (255, 100, 0  ),
-            "AUTO":     (200, 0,   200),
-        }
-        for det in vs.raw_detections:
-            color = COLOR_MAP.get(det.label, (180, 180, 180))
-            if det.label == "SEMAFORO" and obj.traffic_light:
-                lc = obj.traffic_light.color
-                if lc == "red":     color = (0,   0,   255)
-                elif lc == "green": color = (0,   255, 0  )
-                elif lc == "yellow":color = (0,   220, 220)
-            x1 = int(det.x1*sx); y1 = int(det.y1*sy)
-            x2 = int(det.x2*sx); y2 = int(det.y2*sy)
-            cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(vis, f"{det.label} {det.confidence:.0%}",
-                        (x1, max(y1 - 6, 12)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
-
-        # ── Centro del carril (error en coords lores 640px, VIS_W=640) ──
-        lane_cx = max(0, min(W - 1, W // 2 + int(lane.error_px)))
-        cv2.line(vis, (W // 2, H), (W // 2, H // 2), (0, 200, 200), 1)
-        lane_col = (0, 255, 0) if lane.confidence >= 0.30 else (0, 0, 255)
-        cv2.line(vis, (lane_cx, H), (lane_cx, H // 2), lane_col, 2)
-
-        # ── Overlay de texto ─────────────────────────────────────
-        def put(text, y, color=(255, 255, 255)):
-            cv2.putText(vis, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.55, color, 2, cv2.LINE_AA)
-
-        conf_col = (0, 255, 0) if lane.confidence >= 0.30 else (0, 80, 255)
-        put(f"Carril: {lane.error_px:+.0f}px  conf:{lane.confidence:.0%}"
-            + ("  CURVA" if lane.is_curve else ""),
-            28, conf_col)
-
-        tof_txt = f"{tof_mm:.0f} mm" if tof_mm else "--- mm"
-        put(f"ToF: {tof_txt}   FPS: {vs.fps:.0f}", 56, (255, 220, 0))
-
-        if obj.stop_sign_detected:
-            d_txt = f"{obj.stop_sign_distance_mm:.0f} mm" if obj.stop_sign_distance_mm else "? mm"
-            put(f"STOP: {d_txt}", 84, (0, 80, 255))
-
-        if obj.traffic_light:
-            lc = obj.traffic_light.color.upper()
-            lc_col = {"RED":(0,0,255),"GREEN":(0,255,0),"YELLOW":(0,220,220)}.get(lc,(200,200,200))
-            put(f"Semaforo: {lc}", 112, lc_col)
-
-        if lane.crosswalk_detected:
-            put("CRUCERO DETECTADO", 140, (0, 180, 255))
-
-        if _HAS_DISPLAY:
-            cv2.imshow("TMR2026 - Vision", vis)
-            cv2.waitKey(1)
-        else:
-            semaforo = obj.traffic_light.color.upper() if obj.traffic_light else "---"
-            stop_txt = f"STOP {obj.stop_sign_distance_mm:.0f}mm" if obj.stop_sign_detected else "no"
-            print(f"\r[VIS] Carril:{lane.error_px:+.0f}px conf:{lane.confidence:.0%} | "
-                  f"ToF:{tof_mm or '---'}mm | {stop_txt} | Luz:{semaforo} | "
-                  f"FPS:{vs.fps:.0f}   ",
-                  end="", flush=True)
-
-    # ----------------------------------------------------------
-    # Helpers
-    # ----------------------------------------------------------
-    def _safe_stop(self):
-        self.motor.disable()   # 0%/0% — sin pulso de corriente al IBT-2
-        self.steering.center()
-        if self._mode == VehicleMode.AUTONOMOUS:
-            self.autonomous.deactivate()
-
-    def _setup_leds(self):
-        self._led_h   = None
-        self._leds_ok = False
+        # En STANDBY: cualquier botón activa MANUAL
         try:
-            h = lgpio.gpiochip_open(4)
-            for pin in (PIN_LED_STOP, PIN_LED_STATUS):
-                lgpio.gpio_claim_output(h, pin, 0, 0)
-            self._led_h   = h
-            self._leds_ok = True
-        except Exception as e:
-            print(f"[WARN] LEDs no disponibles (GPIO): {e}")
-            # Cerrar el handle si se abrió pero el claim falló
-            try:
-                lgpio.gpiochip_close(h)
-            except Exception:
-                pass
-
-    def _set_led(self, pin: int, state):
-        if not self._leds_ok or self._led_h is None:
-            return
-        try:
-            lgpio.gpio_write(self._led_h, pin, 1 if bool(state) else 0)
+            import pygame
+            pygame.event.pump()
+            for i in range(self._joystick.get_numbuttons()):
+                if self._joystick.get_button(i):
+                    self._set_mode(self.Mode.MANUAL)
+                    return
         except Exception:
             pass
 
-    def _handle_signal(self, signum, frame):
-        print(f"\n[SYS] Señal {signum} → apagando...")
+    def _do_manual(self) -> None:
+        """Control manual: palanca izquierda X → servo | R2 → avance | L2 → reversa."""
+        if self._joystick is None:
+            self.motor.brake()
+            return
+
+        # Dirección
+        steer_raw = self._joystick.get_axis(AXIS_STEER)
+        if abs(steer_raw) < DEADBAND:
+            steer_raw = 0.0
+        angle = SERVO_CENTER + steer_raw * (SERVO_CENTER - SERVO_MIN)
+        self.steering.set_angle(angle)
+
+        # Velocidad
+        throttle = self._joystick.get_axis(AXIS_THROTTLE)   # −1=suelto, +1=fondo
+        brake    = self._joystick.get_axis(AXIS_BRAKE)      # −1=suelto, +1=fondo
+
+        # Normalizar triggers: (valor + 1) / 2 ∈ [0, 1]
+        t = (throttle + 1.0) / 2.0
+        b = (brake    + 1.0) / 2.0
+
+        if b > DEADBAND:
+            # Reversa suave (máx 40%)
+            self.motor.set_speed(-(b ** 2) * 40.0)
+        elif t > DEADBAND:
+            # Avance con soft-start implícito en MotorDriver
+            self.motor.set_speed((t ** 1.3) * 55.0)   # máx 55% en manual
+        else:
+            self.motor.set_speed(0.0)   # rueda libre (no freno)
+
+        print(f"\r[MAN] steer:{steer_raw:+.2f} ({angle:.0f}°)  "
+              f"t:{t:.2f}  b:{b:.2f}  duty:{self.motor.current_duty:.0f}%   ",
+              end="", flush=True)
+
+    def _do_vision(self) -> None:
+        """Debug de visión — motores OFF, muestra pipeline en pantalla."""
+        self.motor.brake()
+        self.steering.center()
+
+        frame = self.camera.get_frame()
+        if frame is None:
+            return
+
+        lane  = self._last_lane
+        dets  = self.sign_det.get_detections()
+        lidar = self.sensor.front_mm
+
+        # Dibujar pipeline en consola o ventana
+        if _DISPLAY:
+            vis = self.lane_pipe.draw_debug(frame, lane)
+
+            # BEV y máscara si debug está activo
+            if lane.bev_frame is not None:
+                small_bev  = cv2.resize(lane.bev_frame,  (320, 180))
+                small_mask = cv2.resize(lane.mask_frame, (320, 180))
+                vis[0:180, 0:320]   = small_bev
+                vis[0:180, 320:640] = small_mask
+
+            # Bboxes YOLO
+            for d in dets:
+                cv2.rectangle(vis, (d.x1, d.y1), (d.x2, d.y2), (0, 0, 255), 2)
+                cv2.putText(vis, f"{d.label} {d.confidence:.0%}",
+                            (d.x1, max(d.y1-6, 12)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,0,255), 1)
+
+            # Info
+            lidar_txt = f"{lidar:.0f}mm" if lidar else "---"
+            cv2.putText(vis, f"Lidar:{lidar_txt}  FPS:30",
+                        (8, CAMERA_H - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 220, 0), 1)
+
+            cv2.imshow("TMR 2026 — Vision Debug", vis)
+            cv2.waitKey(1)
+        else:
+            sign_txt = ", ".join(f"{d.label}({d.confidence:.0%})" for d in dets) or "—"
+            lidar_txt = f"{lidar:.0f}" if lidar else "---"
+            print(f"\r[VIS] err:{lane.error_px:+.0f}px "
+                  f"conf:{lane.confidence:.0%}  "
+                  f"lidar:{lidar_txt}mm  signs:{sign_txt}   ",
+                  end="", flush=True)
+
+    # ─── Apagado limpio ───────────────────────────────────────────────────────
+
+    def _handle_signal(self, signum, _frame) -> None:
+        print(f"\n[SYS] Señal {signum} recibida → apagando...")
         self._running = False
 
-    def _shutdown(self):
-        print("\n[SYS] Apagando...")
-        if _HAS_DISPLAY:
+    def _shutdown(self) -> None:
+        print("\n[SYS] Apagando sistema...")
+        if _DISPLAY:
             cv2.destroyAllWindows()
-        self._safe_stop()
-        self.gamepad.stop()
+        self.fsm.deactivate()
+        self.motor.brake()
+        time.sleep(0.1)
         self.sensor.stop()
-        self.vision.stop()
+        self.sign_det.stop()
+        self.camera.stop()
         self.motor.cleanup()
-        if self._leds_ok and self._led_h is not None:
-            for pin in (PIN_LED_STOP, PIN_LED_STATUS):
-                try:
-                    lgpio.gpio_write(self._led_h, pin, 0)
-                    lgpio.gpio_free(self._led_h, pin)
-                except Exception:
-                    pass
-            lgpio.gpiochip_close(self._led_h)
-        print("[SYS] Listo.")
+        print("[SYS] Apagado completado.")
 
 
-# ----------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    CarritoTMR().run()
+    VehicleTMR().run()
