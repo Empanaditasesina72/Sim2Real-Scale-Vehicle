@@ -18,6 +18,16 @@ MOTOR_PWM_FREQ = 1000 # Hz
 PIN_LED_STOP   = 25   # Parpadea durante parada en STOP
 PIN_LED_STATUS = 26   # Estado general del sistema
 
+# --- LEDs de señalización vehicular (direccionales + freno) -------------------
+# Pin 19 / 20 coinciden con vision_config.yaml (led_turn_left / led_turn_right)
+# para reutilizar el cableado del módulo de prueba vision_module.py.
+# Pin 16 para freno — libre, no choca con nada en TMR2026 ni en el YAML.
+# NO usar 17 (PIN_TOF_XSHUT_FRONT), 5/6 (hazard_left/right del YAML), 18/13 (motor).
+PIN_LED_TURN_LEFT  = 19
+PIN_LED_TURN_RIGHT = 20
+PIN_LED_BRAKE      = 16
+SIGNAL_BLINK_HZ    = 2.0   # Parpadeo direccionales / hazard (reglamento TMR)
+
 # ============================================================
 # I²C BUS 3  (GPIO 0=SDA, GPIO 1=SCL) — PCA9685 servo
 # dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=0,i2c_gpio_scl=1

@@ -32,6 +32,13 @@ import time
 from enum import Enum, auto
 from typing import Optional
 
+try:
+    from hardware.signals import SignalMode
+except Exception:
+    # Fallback para que el módulo sea importable en PC de dev sin hardware
+    class SignalMode:
+        OFF = "OFF"; LEFT = "LEFT"; RIGHT = "RIGHT"; HAZARD = "HAZARD"
+
 
 class FSMState(Enum):
     CRUCERO    = auto()   # Avance normal, PID de dirección
@@ -77,23 +84,32 @@ class AutonomousFSM:
     SERVO_MIN       = 45.0
     SERVO_MAX       = 135.0
 
-    def __init__(self, motor, steering, pid):
+    # Umbral de distancia (mm) calculado por bbox para confirmar parada.
+    # Se usa SOLO si el lidar no da lectura (fallback).
+    SIGN_BBOX_STOP_MM = 350
+
+    def __init__(self, motor, steering, pid, signals=None, brake_light=None):
         """
         Parameters
         ----------
-        motor    : MotorDriver
-        steering : SteeringDriver
-        pid      : PIDController (setpoint=0, output= ángulo de corrección en grados)
+        motor       : MotorDriver
+        steering    : SteeringDriver
+        pid         : PIDController (setpoint=0, output=ángulo corrección en grados)
+        signals     : TurnSignals (opcional) — direccionales / hazard
+        brake_light : BrakeLight (opcional) — luz de freno
         """
-        self.motor    = motor
-        self.steering = steering
-        self.pid      = pid
+        self.motor       = motor
+        self.steering    = steering
+        self.pid         = pid
+        self.signals     = signals
+        self.brake_light = brake_light
 
         # ── Entradas (actualizar desde el bucle principal antes de update()) ──
-        self.lane_error:   float          = 0.0   # px — del LanePipeline
-        self.lane_conf:    float          = 0.0   # [0,1]
-        self.lidar_mm:     Optional[float] = None  # mm — del VL53L0X
-        self.sign_visible: bool           = False  # del SignDetector
+        self.lane_error:      float           = 0.0   # px — del LanePipeline
+        self.lane_conf:       float           = 0.0   # [0,1]
+        self.lidar_mm:        Optional[float] = None  # mm — del VL53L0X
+        self.sign_visible:    bool            = False # del SignDetector (histéresis OK)
+        self.sign_distance_mm:Optional[float] = None  # mm — estimado por bbox
 
         # ── Estado interno ────────────────────────────────────────────────────
         self._state          = FSMState.CRUCERO
@@ -111,6 +127,7 @@ class AutonomousFSM:
         self._state        = FSMState.CRUCERO
         self._resume_speed = 0.0
         self._active       = True
+        self._apply_lights(FSMState.CRUCERO)
         print("[FSM] Modo autónomo ACTIVADO")
 
     def deactivate(self) -> None:
@@ -118,6 +135,10 @@ class AutonomousFSM:
         self._active = False
         self.motor.brake()
         self.steering.center()
+        if self.signals is not None:
+            self.signals.set_mode(SignalMode.OFF)
+        if self.brake_light is not None:
+            self.brake_light.off()
         print("[FSM] Modo autónomo DESACTIVADO")
 
     @property
@@ -134,6 +155,9 @@ class AutonomousFSM:
         SIEMPRE actualiza el servo, aunque el motor esté parado.
         """
         if not self._active:
+            # Incluso desactivado, avanzamos el parpadeo para no congelar los LEDs
+            if self.signals is not None:
+                self.signals.tick()
             return
 
         # ── 1. Dirección — siempre, en TODOS los estados ──────────────────
@@ -151,6 +175,10 @@ class AutonomousFSM:
                 self._do_espera()
             case FSMState.REANUDAR:
                 self._do_reanudar()
+
+        # ── 3. Avanzar parpadeo de direccionales (no bloquea) ──────────────
+        if self.signals is not None:
+            self.signals.tick()
 
     # ─── Sub-estados ──────────────────────────────────────────────────────────
 
@@ -175,6 +203,15 @@ class AutonomousFSM:
 
         # Lidar confirma distancia ≤ 30 cm → FRENADO
         if self.lidar_mm is not None and self.lidar_mm <= self.LIDAR_STOP_MM:
+            self._transition(FSMState.FRENADO)
+            return
+
+        # Fallback por bbox: si NO hay lidar pero la estimación por cámara
+        # ya confirma que estamos cerca → FRENADO
+        if (self.lidar_mm is None
+            and self.sign_distance_mm is not None
+            and self.sign_distance_mm <= self.SIGN_BBOX_STOP_MM):
+            print(f"[FSM] Frenando por bbox ({self.sign_distance_mm:.0f} mm sin lidar)")
             self._transition(FSMState.FRENADO)
             return
 
@@ -245,3 +282,28 @@ class AutonomousFSM:
 
         elif new_state == FSMState.CRUCERO:
             self.pid.reset()
+
+        # Actualizar luces (direccionales + freno) según el nuevo estado
+        self._apply_lights(new_state)
+
+    # ─── Luces según estado ───────────────────────────────────────────────────
+    def _apply_lights(self, state: FSMState) -> None:
+        """
+        Mapeo estado → luces:
+          CRUCERO    → signals OFF,    brake OFF
+          PRECAUCION → signals HAZARD, brake OFF   (aviso de frenado)
+          FRENADO    → signals HAZARD, brake ON
+          ESPERA     → signals HAZARD, brake ON
+          REANUDAR   → signals OFF,    brake OFF
+        """
+        if self.signals is not None:
+            if state in (FSMState.PRECAUCION, FSMState.FRENADO, FSMState.ESPERA):
+                self.signals.set_mode(SignalMode.HAZARD)
+            else:
+                self.signals.set_mode(SignalMode.OFF)
+
+        if self.brake_light is not None:
+            if state in (FSMState.FRENADO, FSMState.ESPERA):
+                self.brake_light.on()
+            else:
+                self.brake_light.off()

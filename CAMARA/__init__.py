@@ -1,1 +1,0 @@
-# Módulo de percepción con cámara

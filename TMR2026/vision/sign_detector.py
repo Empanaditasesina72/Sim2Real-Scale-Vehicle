@@ -19,17 +19,26 @@ from typing import Optional
 
 import numpy as np
 
+try:
+    from config import STOP_SIGN_REAL_HEIGHT_M, CAMERA_FOCAL_LENGTH_PX
+except ImportError:
+    # Valores de respaldo si no se corre desde TMR2026/ como CWD
+    STOP_SIGN_REAL_HEIGHT_M = 0.18
+    CAMERA_FOCAL_LENGTH_PX  = 490.0
+
 
 class Detection:
     """Una detección confirmada de señal."""
-    __slots__ = ("label", "confidence", "x1", "y1", "x2", "y2")
+    __slots__ = ("label", "confidence", "x1", "y1", "x2", "y2", "distance_m")
 
     def __init__(self, label: str, confidence: float,
-                 x1: int, y1: int, x2: int, y2: int):
+                 x1: int, y1: int, x2: int, y2: int,
+                 distance_m: Optional[float] = None):
         self.label      = label
         self.confidence = confidence
         self.x1 = x1; self.y1 = y1
         self.x2 = x2; self.y2 = y2
+        self.distance_m = distance_m   # estimación pinhole a partir del bbox
 
     @property
     def area(self) -> int:
@@ -38,6 +47,10 @@ class Detection:
     @property
     def cx(self) -> int:
         return (self.x1 + self.x2) // 2
+
+    @property
+    def height_px(self) -> int:
+        return max(1, self.y2 - self.y1)
 
 
 class SignDetector:
@@ -59,20 +72,30 @@ class SignDetector:
     # Frecuencia máxima del detector (Hz) — Pi 5 CPU puede con ~15 FPS a 320px
     MAX_HZ = 12.0
 
+    # Histéresis: una etiqueta se publica solo si aparece en N frames seguidos
+    HYSTERESIS_FRAMES = 3
+
     def __init__(
         self,
         model_path: str  = "weights/tmr_signs.pt",
         conf:       float = 0.55,
         imgsz:      int   = 320,
+        hysteresis_frames: int = HYSTERESIS_FRAMES,
     ):
         self._conf   = conf
         self._imgsz  = imgsz
+        self._hysteresis = max(1, hysteresis_frames)
         self._model  = None
 
         self._frame:      Optional[np.ndarray] = None
         self._frame_lock  = threading.Lock()
         self._results:    list[Detection] = []
         self._result_lock = threading.Lock()
+
+        # Contador de frames consecutivos por etiqueta — clave de la histéresis
+        self._consecutive: dict[str, int] = {}
+        # Última detección cruda vista por etiqueta (para re-emitir cuando se confirma)
+        self._last_raw:    dict[str, Detection] = {}
 
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -118,6 +141,19 @@ class SignDetector:
         """True si hay alguna señal relevante detectada."""
         return len(self.get_detections()) > 0
 
+    def closest_sign(self, label: Optional[str] = None) -> Optional[Detection]:
+        """
+        Retorna la detección con menor `distance_m` (la más cercana).
+        Filtra por etiqueta si se pasa.  None si no hay nada.
+        """
+        dets = self.get_detections()
+        if label is not None:
+            dets = [d for d in dets if d.label == label]
+        dets = [d for d in dets if d.distance_m is not None]
+        if not dets:
+            return None
+        return min(dets, key=lambda d: d.distance_m)
+
     # ─── Carga de modelo ─────────────────────────────────────────────────────
 
     def _load_model(self) -> None:
@@ -155,18 +191,53 @@ class SignDetector:
                     conf=self._conf,
                     verbose=False,
                 )
-                detections = self._parse_results(results, frame.shape)
+                raw_dets = self._parse_results(results, frame.shape)
             except Exception as e:
                 print(f"[YOLO] Error de inferencia: {e}")
-                detections = []
+                raw_dets = []
+
+            # ─── Histéresis: sólo publicamos etiquetas con N frames seguidos ───
+            confirmed = self._apply_hysteresis(raw_dets)
 
             with self._result_lock:
-                self._results = detections
+                self._results = confirmed
 
             # Throttle — no saturar la CPU
             elapsed = time.monotonic() - t0
             sleep   = max(0.0, min_interval - elapsed)
             time.sleep(sleep)
+
+    def _apply_hysteresis(self, raw_dets: list[Detection]) -> list[Detection]:
+        """
+        Filtro temporal: una detección sólo se confirma (y se publica) cuando
+        aparece con la misma etiqueta en `self._hysteresis` frames consecutivos.
+
+        - Guarda el contador por etiqueta en `self._consecutive`.
+        - Guarda la última detección cruda por etiqueta en `self._last_raw`
+          (usando la de mayor área si hay varias en el frame — suele ser la
+          más cercana, que es la que le interesa a la FSM).
+        """
+        seen_this_frame: dict[str, Detection] = {}
+        for d in raw_dets:
+            prev = seen_this_frame.get(d.label)
+            if prev is None or d.area > prev.area:
+                seen_this_frame[d.label] = d
+
+        # Actualizar contadores
+        for label in list(self._consecutive.keys()):
+            if label not in seen_this_frame:
+                self._consecutive[label] = 0
+
+        for label, det in seen_this_frame.items():
+            self._consecutive[label] = self._consecutive.get(label, 0) + 1
+            self._last_raw[label]    = det
+
+        # Emitir sólo las confirmadas
+        confirmed: list[Detection] = []
+        for label, count in self._consecutive.items():
+            if count >= self._hysteresis and label in self._last_raw:
+                confirmed.append(self._last_raw[label])
+        return confirmed
 
     def _parse_results(self, results, img_shape) -> list[Detection]:
         ih, iw = img_shape[:2]
@@ -197,6 +268,19 @@ class SignDetector:
 
                 # Normalizar etiqueta
                 normalized = "stop_sign" if "stop" in label else "crosswalk"
-                dets.append(Detection(normalized, conf, x1, y1, x2, y2))
+
+                # Estimación de distancia por pinhole:
+                #   dist_m = (alto_real_m × focal_px) / alto_bbox_px
+                # Sólo la calculamos para stop_sign (altura real conocida).
+                distance_m: Optional[float] = None
+                height_px = max(1, y2 - y1)
+                if normalized == "stop_sign":
+                    distance_m = (STOP_SIGN_REAL_HEIGHT_M
+                                  * CAMERA_FOCAL_LENGTH_PX) / height_px
+
+                dets.append(Detection(
+                    normalized, conf, x1, y1, x2, y2,
+                    distance_m=distance_m,
+                ))
 
         return dets

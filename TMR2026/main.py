@@ -85,11 +85,17 @@ DEADBAND          = 0.08
 from hardware.motor            import MotorDriver
 from hardware.steering_driver  import SteeringDriver
 from hardware.distance_sensor  import DistanceSensor
+from hardware.signals          import TurnSignals, SignalMode
+from hardware.brake_light      import BrakeLight
 from vision.camera_stream      import CameraStream
 from vision.lane_pipeline      import LanePipeline, LaneResult
 from vision.sign_detector      import SignDetector
 from control.pid_controller    import PIDController
 from control.fsm               import AutonomousFSM, FSMState
+
+from config import (
+    PIN_LED_TURN_LEFT, PIN_LED_TURN_RIGHT, PIN_LED_BRAKE, SIGNAL_BLINK_HZ,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -122,6 +128,12 @@ class VehicleTMR:
         self.motor    = MotorDriver(pin_rpwm=MOTOR_RPWM, pin_lpwm=MOTOR_LPWM)
         self.steering = SteeringDriver()
         self.sensor   = DistanceSensor()
+        self.signals  = TurnSignals(
+            pin_left  = PIN_LED_TURN_LEFT,
+            pin_right = PIN_LED_TURN_RIGHT,
+            blink_hz  = SIGNAL_BLINK_HZ,
+        )
+        self.brake_light = BrakeLight(pin=PIN_LED_BRAKE)
 
         # ── Visión ────────────────────────────────────────────────
         self.camera = CameraStream(
@@ -142,7 +154,11 @@ class VehicleTMR:
             output_limits=(PID_OUT_MIN, PID_OUT_MAX),
             integral_limits=(-25.0, 25.0),
         )
-        self.fsm = AutonomousFSM(self.motor, self.steering, self.pid)
+        self.fsm = AutonomousFSM(
+            self.motor, self.steering, self.pid,
+            signals     = self.signals,
+            brake_light = self.brake_light,
+        )
 
         # ── Gamepad (pygame) ──────────────────────────────────────
         self._joystick = None
@@ -291,6 +307,13 @@ class VehicleTMR:
         self.fsm.lidar_mm     = self.sensor.front_mm
         self.fsm.sign_visible = self.sign_det.has_any_sign()
 
+        # Distancia a la señal STOP estimada por bbox (fallback si no hay lidar)
+        closest = self.sign_det.closest_sign("stop_sign")
+        if closest is not None and closest.distance_m is not None:
+            self.fsm.sign_distance_mm = closest.distance_m * 1000.0
+        else:
+            self.fsm.sign_distance_mm = None
+
     # ─── Modos de operación ───────────────────────────────────────────────────
 
     def _run_mode(self, dt: float) -> None:
@@ -417,6 +440,10 @@ class VehicleTMR:
         self.sensor.stop()
         self.sign_det.stop()
         self.camera.stop()
+        try:    self.signals.close()
+        except: pass
+        try:    self.brake_light.close()
+        except: pass
         self.motor.cleanup()
         print("[SYS] Apagado completado.")
 

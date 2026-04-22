@@ -83,10 +83,24 @@ class LanePipeline:
     # ── Suavizado temporal ────────────────────────────────────────────────────
     EMA_ALPHA  = 0.65  # Factor EMA (más alto = responde más rápido, más ruidoso)
 
-    def __init__(self, frame_w: int = 640, frame_h: int = 480, debug: bool = False):
+    # ── Sesgo lateral dentro del carril ───────────────────────────────────────
+    # 0.0 = pegado a la línea izquierda
+    # 0.5 = centro exacto del carril (comportamiento histórico)
+    # 1.0 = pegado a la línea derecha
+    # Para TMR suele interesar 0.60–0.75 (seguir el carril derecho).
+    RIGHT_BIAS = 0.5
+
+    def __init__(
+        self,
+        frame_w: int = 640,
+        frame_h: int = 480,
+        debug: bool = False,
+        right_bias: float = RIGHT_BIAS,
+    ):
         self._w     = frame_w
         self._h     = frame_h
         self._debug = debug
+        self._right_bias = max(0.0, min(1.0, float(right_bias)))
 
         # ROI: ignorar la mitad superior del frame
         self._roi_y = frame_h // 2
@@ -241,20 +255,29 @@ class LanePipeline:
 
         # ── Calcular centro y error ────────────────────────────
         frame_cx = w / 2.0
+        bias     = self._right_bias   # 0=izq, 0.5=centro, 1=der
 
         if left_centers and right_centers:
-            lane_cx    = (np.mean(left_centers) + np.mean(right_centers)) / 2.0
+            mean_l = float(np.mean(left_centers))
+            mean_r = float(np.mean(right_centers))
+            # Punto objetivo dentro del carril según sesgo:
+            #   bias=0.5 → (mean_l + mean_r)/2   (centro)
+            #   bias=1.0 → mean_r                (línea derecha)
+            lane_cx    = mean_l + bias * (mean_r - mean_l)
             confidence = 1.0
-            left_x_avg  = int(np.mean(left_centers))
-            right_x_avg = int(np.mean(right_centers))
+            left_x_avg  = int(mean_l)
+            right_x_avg = int(mean_r)
         elif left_centers:
-            # Solo línea izquierda — estimar posición del carril
-            lane_cx    = np.mean(left_centers) + w * 0.28
+            # Solo línea izquierda — estimar objetivo desplazado a la derecha
+            # según el sesgo (más sesgo = más lejos de la izquierda).
+            lane_cx    = np.mean(left_centers) + w * (0.20 + 0.16 * bias)
             confidence = 0.5
             left_x_avg  = int(np.mean(left_centers))
             right_x_avg = None
         elif right_centers:
-            lane_cx    = np.mean(right_centers) - w * 0.28
+            # Solo línea derecha — estimar objetivo desplazado a la izquierda
+            # menos cuando el sesgo es derecho (queremos quedar cerca de ella).
+            lane_cx    = np.mean(right_centers) - w * (0.36 - 0.16 * bias)
             confidence = 0.5
             left_x_avg  = None
             right_x_avg = int(np.mean(right_centers))

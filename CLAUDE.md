@@ -2,83 +2,93 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Hardware Target
+## Active system: TMR2026/
 
-Raspberry Pi with:
-- CSI camera (Picamera2) — refactored system; USB webcam — original system
-- VL53L0X ToF distance sensors via I2C (original) or serial UART `/dev/ttyUSB0` CSV format `"dist_delante,dist_atras"` (refactored)
-- GPIO PWM motor control (PIN 18 = PWM, PIN 23 = DIR)
-- GPIO LEDs: rojo=17, amarillo=27, verde=22 (BCM mode)
-- Optional: pygame joystick (button 2 = activate, button 0 = emergency stop)
+Everything under `TMR2026/` is the current vehicle. Legacy prototypes live in `_legacy/` and must not be imported from TMR2026.
+
+**Root `main.py` is a loader** — it `chdir`s into `TMR2026/` and runs `TMR2026/main.py` with `runpy` so imports like `from hardware.motor import MotorDriver` keep working. The systemd service (`TMR2026/systemd/carrito_tmr.service`) still points directly to `TMR2026/main.py`; root `main.py` is only for manual execution.
+
+### Hardware Target
+
+Raspberry Pi 5 with:
+- Sony IMX500 NPU camera via `Picamera2` (RGB888 → BGR via `cv2.cvtColor(RGB2BGR)` — must preserve)
+- IBT-2 H-bridge motor: BCM 18 (RPWM) + 13 (LPWM), `R_EN`/`L_EN` tied to 3.3 V
+- PCA9685 servo on I²C bus 3 (dtoverlay GPIO 0/1), channel 0
+- 2× VL53L0X ToF on I²C bus 4 (dtoverlay GPIO 23/22), addresses 0x30 (front) / 0x29 (rear), XSHUT pin `TMR2026/config.py:PIN_TOF_XSHUT_FRONT`
+- Gamepad via `pygame` (PS4/Xbox) — buttons: A=MANUAL, B=VISION, X=AUTONOMOUS, Start=EMERGENCY
+- GPIO LEDs for turn signals / hazards / brake — pins defined in `TMR2026/vision_config.yaml` → `gpio:` and mirrored in `config.py`
+
+GPIO is accessed via `lgpio` (chip 4 on Pi 5) with a `RPi.GPIO` fallback.
 
 ## Running the System
 
 ```bash
-# Refactored system (Raspberry Pi CSI camera) — recommended
-python main_refactored.py
+# From repo root (recommended for manual runs)
+python main.py               # production
+python main.py --display     # with debug window
 
-# Original system (USB webcam + I2C VL53L0X)
-python AUTO_YOLO/main.py
+# Direct (what systemd uses)
+python TMR2026/main.py
 ```
 
-Controls: `Q` = quit, `P` = toggle parking mode, `R` = reset system state.
+Runtime modes (cycled via gamepad): `STANDBY → MANUAL → VISION → AUTONOMOUS`. `Start` button = emergency freeze.
 
 ## Installing Dependencies
 
-No `requirements.txt` exists. Install manually:
-
 ```bash
-pip install ultralytics opencv-python numpy matplotlib pyserial pygame
-# Raspberry Pi specific:
-pip install picamera2 RPi.GPIO adafruit-circuitpython-vl53l0x
+pip install -r TMR2026/requirements.txt
+# Pi-specific extras:
+pip install picamera2 lgpio adafruit-circuitpython-vl53l0x adafruit-circuitpython-pca9685 ultralytics
 ```
 
-## Architecture
+See `TMR2026/SETUP.md` for dtoverlay config and udev rules.
 
-The codebase has two parallel implementations that co-exist:
+## Architecture (TMR2026/)
 
-### Refactored System (CAMARA / CONTROL / STATE_MACHINE)
-Used by `main_refactored.py`. Clean modular design:
+### Threads
+- `CameraStream` (vision/camera_stream.py) — 30 FPS, BGR frames, locks AE/AWB after warmup
+- `SignDetector` (vision/sign_detector.py) — ~12 FPS YOLO CPU, loads `weights/tmr_signs.pt`
+- `DistanceSensor` (hardware/distance_sensor.py) — 50 Hz polling, front + rear VL53L0X
+- `MotorDriver` (hardware/motor.py) — internal 50 Hz soft-start ramp thread (prevents voltage sag)
+- Main loop in `main.py` at 50 Hz: gamepad → FSM → servo → motor
 
-- **`CAMARA/`** — All perception. Each detector exposes `detectar_*(frame)` and `dibujar_*(frame, result)`.
-  - `YOLO/objeto/` — Object detection (stop, yield, speed_limit signs) via YOLOv8
-  - `YOLO/semaforo/` — Traffic light color classification (HSV-based)
-  - `YOLO/señal/` — Traffic sign detection
-  - `lane_detection/lane_center/` — Lane center via Canny + Hough + polyfit
-  - `lane_detection/lane_curvature/` — Road curvature calculation
+### Perception → decision → actuation
+- `vision/lane_pipeline.py` — BEV + HSV-white + sliding windows + EMA; emits `LaneResult(error_px, confidence)`
+- `vision/sign_detector.py` — non-blocking queue of `Detection(label, confidence, bbox)`; only `stop_sign` and `crosswalk` labels are surfaced
+- `control/fsm.py` — 5-state FSM: `CRUCERO → PRECAUCION → FRENADO → ESPERA → REANUDAR`. Stop wait uses `time.monotonic()`, never `sleep()`. `brake()` is instantaneous and must not be wrapped/changed
+- `control/pid_controller.py` — generic PID with anti-windup and derivative-on-measurement, used for steering (lane error → servo angle)
 
-- **`PERCEPTION_OUTPUT/perception_output.py`** — Central data structure aggregating all sensor/vision data. Fields: `distancia_obj`, `tipo_obj`, `lane_error`, `semaforo`, `interseccion`. Passed as dict via `obtener_estado_percepcion()`.
+### Alternative modules (exist but not wired into main.py)
+These are full implementations kept for future wiring. Treat as library code:
+- `hardware/camera_manager.py` — IMX500 NPU-side inference (alternative to CPU sign detector)
+- `hardware/motor_driver.py` — simpler lgpio-only motor (alternative to soft-start version)
+- `vision/lane_detector.py` — classic ROI/threshold/histogram lane detector + crosswalk detection
+- `vision/object_detector.py` — HSV traffic-light classifier + STOP distance via bbox + overtake/parking cues
+- `control/gamepad_reader.py` — threaded gamepad reader at 100 Hz (main.py uses pygame directly)
+- `autonomy/autonomous_mode.py` — advanced 9-state FSM (CROSSWALK_STOP, OVERTAKING_*, PARKING, OBSTACLE_HOLD)
+- `autonomy/parking_maneuver.py` — Ackermann-based parallel parking sub-FSM
 
-- **`STATE_MACHINE/state_machine.py`** — Evaluates `PerceptionOutput` dict and returns one of 12 states (constants at top of file). Priority order: EMERGENCIA > semáforos > intersecciones > obstáculos > RUTA_LIBRE. `accion()` returns `(setpoint_velocidad, estado_str)`.
-
-- **`CONTROL/vehicle_controller.py`** — `VehicleController` with:
-  - `controlar_velocidad(setpoint)` — PID velocity loop (Kp=0.6, Ki=0.2, Kd=0.05)
-  - `controlar_direccion_simple(lane_error, frame_width)` — proportional steering, both wheels same angle, clipped to ±30°. Formula: `angle = 0.5 * (lane_error / (frame_width/2))`
-  - `maniobra_estacionamiento_paralelo(...)` — 4-phase parallel parking (search→align→backup→adjust)
-
-### Original System (AUTO_YOLO/)
-Used by `AUTO_YOLO/main.py`. Flat structure, tighter coupling:
-
-- `detector/detector.py` — Combined YOLO inference + distance estimation + semaphore color detection
-- `vision/lane_detector.py` — Lane detection returning center X coordinate
-- `pid/pid_controller.py` — Classic PID
-- `feedback/adaptive_pid.py` — Adjusts gains dynamically: `Kp = clip(0.4 + 0.02*|error|, max=3.0)`
-- `motor/pwm_controller.py` — Smooth PWM ramp (max 3% step per tick)
-- `fsm/state_machine.py` — Hierarchical FSM: SensorFSM → StopFSM → SemaforoFSM (evaluated in reverse priority)
+### Personal test scripts (do not wire into main.py)
+- `vision_module.py` — user's standalone camera experiment with its own 9-state FSM and its own hazard/turn-signal implementation via `lgpio` chip 4. Pins come from `vision_config.yaml`.
+- `test_gamepad.py`, `test_servo.py`, `test_vision.py` — diagnostics.
 
 ## YOLO Models
 
-Models are located at:
-- `AUTO_YOLO/weights/best.pt` — custom trained object detector
-- `best.pt` (root) — latest custom model
-- `yolov8n.pt` — pretrained YOLOv8 nano
+- `TMR2026/weights/tmr_signs.pt` — active model loaded by `SignDetector`. Trained from `yolov8n.pt` on `traffic_lights/data.yaml` (7 classes: `green, left, red, right, stop, straight, yellow`). Only `stop` is currently surfaced by the filter in `sign_detector.py`.
+- `_legacy/runs/detect/train2/weights/` — source of the active model (checkpoint + training artifacts).
+- `_legacy/runs/detect/train/weights/best.pt` — larger variant (~18 MB) kept as backup.
+- `traffic_lights/` — Roboflow v9 dataset (1470 close-up sign images, no track photos). Use to re-train if adding a `crosswalk` class.
 
-Traffic light model trained on 7 classes: `green, red, yellow, left, right, straight, stop` (see `traffic_lights/data.yaml`).
+## Hard rules (don't break these)
 
-## Key Design Decisions
+- **Never modify `motor.brake()`** — it must remain an instantaneous hard-cut to 0.
+- **Never remove `cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)`** in `vision/camera_stream.py`.
+- **Never edit `vision_module.py`** — it's the user's personal camera experiment. Its hazard/turn-signal code is independent from the production `hardware/signals.py` module.
+- **Never import from `_legacy/`** inside `TMR2026/`.
+- **ESPERA state must use `time.monotonic()`**, not `time.sleep()` — the loop must keep serving the FSM.
+- Turn-signal / hazard blink rate is `2 Hz` (per TMR regulation).
 
-**Simple steering over Ackerman**: Both front wheels rotate at identical angles. Ackerman geometry (`STATE_MACHINE/state_machine.py:get_steering_ackerman`) exists but is not used in the main loop — `controlar_direccion_simple` is the active path.
+## Known inconsistencies
 
-**Known issue**: `main_refactored.py` line 189 hardcodes `espacio_parking_detectado = True`, causing parking mode to activate automatically whenever `lane_error < 20`. Parking requires real lateral sensors to work correctly.
-
-**Distance units**: ToF serial data arrives in mm, converted to cm (`dist_delante / 10`) before storing in `PerceptionOutput.distancia_obj`. FSM thresholds are in cm: EMERGENCIA < 15cm, STOP_CERCA < 25cm, STOP_LEJOS < 50cm.
+- `TMR2026/main.py:46` hardcodes `SERVO_CHANNEL=0` but `config.py:SERVO_CHANNEL=15`. `main.py` wins at runtime because it doesn't import `SERVO_CHANNEL` from config.
+- `TMR2026/main.py:51` hardcodes `TOF_XSHUT_PIN=17`. If new GPIO LEDs reuse pin 17 the ToF bring-up will fight them — keep LED pins off 17.
