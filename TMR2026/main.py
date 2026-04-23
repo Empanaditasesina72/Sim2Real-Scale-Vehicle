@@ -380,10 +380,10 @@ class VehicleTMR:
         angle = SERVO_CENTER + steer_raw * (SERVO_CENTER - SERVO_MIN)
         self.steering.set_angle(angle)
 
-        # Direccionales según dirección del giro
-        if   steer_raw < -0.15:
+        # Direccionales según dirección del giro (umbral alto para ignorar drift)
+        if   steer_raw < -0.30:
             self.signals.set_mode(SignalMode.LEFT)
-        elif steer_raw > +0.15:
+        elif steer_raw > +0.30:
             self.signals.set_mode(SignalMode.RIGHT)
         else:
             self.signals.set_mode(SignalMode.OFF)

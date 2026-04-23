@@ -86,7 +86,7 @@ class AutonomousFSM:
 
     # Umbral en grados desde el centro para activar direccional en CRUCERO/REANUDAR.
     # < SIGNAL_DIR_THRESH_DEG → off (ruedas casi rectas, no vale la pena parpadear).
-    SIGNAL_DIR_THRESH_DEG = 6.0
+    SIGNAL_DIR_THRESH_DEG = 12.0
 
     # Umbral de distancia (mm) calculado por bbox para confirmar parada.
     # Se usa SOLO si el lidar no da lectura (fallback).
