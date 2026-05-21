@@ -1,6 +1,6 @@
 [Unit]
 Description=Carrito TMR 2026 — Sistema Autonomo
-After=network.target bluetooth.target
+After=graphical.target bluetooth.target
 Wants=bluetooth.target
 
 [Service]
@@ -10,7 +10,9 @@ WorkingDirectory=/home/angel01/Carrito/TMR2026
 Environment="PYTHONUNBUFFERED=1"
 Environment="SDL_VIDEODRIVER=dummy"
 Environment="SDL_AUDIODRIVER=dummy"
-ExecStart=/usr/bin/python3 /home/angel01/Carrito/TMR2026/main.py
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=/home/angel01/.Xauthority"
+ExecStart=/usr/bin/python3 /home/angel01/Carrito/TMR2026/main.py --display
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=10s
@@ -19,4 +21,4 @@ StandardError=journal
 SyslogIdentifier=carrito_tmr
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target

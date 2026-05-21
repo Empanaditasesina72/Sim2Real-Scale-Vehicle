@@ -9,8 +9,11 @@ solo la cámara para estimar distancias.
 Cableado:
   SDA        → GPIO 23 (Pin 16)
   SCL        → GPIO 22 (Pin 15)
-  XSHUT front → GPIO 17 (Pin 11)
+  XSHUT front → GPIO 24 (Pin 18)  — libre, reservado para lidar frontal futuro
   XSHUT rear  → GPIO 27 (Pin 13)
+
+Si el sensor frontal no responde (no está conectado físicamente) el rear
+sigue funcionando y el sistema degrada con gracia: front_mm queda en None.
 """
 
 import threading
@@ -48,29 +51,40 @@ class DistanceSensor:
 
             i2c = ExtendedI2C(4)  # /dev/i2c-4 (GPIO 22=SCL, GPIO 23=SDA)
 
-            # Sensor delantero → cambiar dirección a 0x30
+            # 1. Sensor frontal (si existe) → cambiar dirección a 0x30
             lgpio.gpio_write(self._h, PIN_TOF_XSHUT_FRONT, 1)
             time.sleep(0.1)
-            front = adafruit_vl53l0x.VL53L0X(i2c)
-            front.set_address(TOF_ADDR_FRONT)
-            front.measurement_timing_budget = TOF_TIMING_BUDGET_US
-            self._front = front
+            try:
+                front = adafruit_vl53l0x.VL53L0X(i2c)
+                front.set_address(TOF_ADDR_FRONT)
+                front.measurement_timing_budget = TOF_TIMING_BUDGET_US
+                self._front = front
+                print(f"[TOF] Frontal OK @ 0x{TOF_ADDR_FRONT:02X}")
+            except Exception as e:
+                self._front = None
+                print(f"[TOF] Frontal no detectado ({e}) — degradando a rear-only")
 
-            # Sensor trasero → queda en 0x29
+            # 2. Sensor trasero → queda en 0x29 (default)
             lgpio.gpio_write(self._h, PIN_TOF_XSHUT_REAR, 1)
             time.sleep(0.1)
-            rear = adafruit_vl53l0x.VL53L0X(i2c)
-            rear.measurement_timing_budget = TOF_TIMING_BUDGET_US
-            self._rear = rear
+            try:
+                rear = adafruit_vl53l0x.VL53L0X(i2c)
+                rear.measurement_timing_budget = TOF_TIMING_BUDGET_US
+                self._rear = rear
+                print(f"[TOF] Trasero OK @ 0x{TOF_ADDR_REAR:02X}")
+            except Exception as e:
+                self._rear = None
+                print(f"[TOF] Trasero no detectado ({e})")
 
-            self._available = True
-            print("[TOF] Dos sensores VL53L0X inicializados OK")
+            self._available = (self._front is not None) or (self._rear is not None)
+            if not self._available:
+                print("[TOF] Ningún sensor responde — continuando sin ToF")
 
         except Exception as e:
-            # Liberar XSHUT para que no queden en LOW indefinidamente
+            # Algo más profundo falló (driver / bus I²C) — desactivar todo
             lgpio.gpio_write(self._h, PIN_TOF_XSHUT_FRONT, 1)
             lgpio.gpio_write(self._h, PIN_TOF_XSHUT_REAR,  1)
-            print(f"[TOF] Sensores no disponibles ({e}) — continuando sin ToF")
+            print(f"[TOF] Init falló ({e}) — continuando sin ToF")
 
         self._front_mm: float | None = None
         self._rear_mm:  float | None = None

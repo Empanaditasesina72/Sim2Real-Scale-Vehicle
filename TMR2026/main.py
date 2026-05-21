@@ -25,6 +25,7 @@ import os
 import sys
 import time
 import signal
+import subprocess
 import threading
 from typing import Optional
 
@@ -34,6 +35,44 @@ import cv2
 _DISPLAY = "--display" in sys.argv
 if _DISPLAY:
     os.environ.setdefault("DISPLAY", ":0")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Liberar GPIO del servicio systemd antes de inicializar hardware.
+# Si carrito_tmr.service está activo, los pines ya están reclamados y
+# RPi.GPIO/lgpio fallan con 'GPIO not allocated'. Ejecutamos `systemctl stop`
+# automáticamente (passwordless sudo). Si nosotros mismos somos el servicio
+# (INVOCATION_ID viene de systemd), no hacemos nada.
+# ─────────────────────────────────────────────────────────────────────────────
+def _release_gpio_from_systemd() -> None:
+    if os.environ.get("INVOCATION_ID"):
+        return
+    try:
+        active = subprocess.run(
+            ["systemctl", "is-active", "--quiet", "carrito_tmr"],
+            timeout=2,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return
+    if active.returncode != 0:
+        return
+
+    print("[SYS] carrito_tmr.service activo — deteniéndolo para liberar GPIO...")
+    try:
+        subprocess.run(
+            ["sudo", "-n", "systemctl", "stop", "carrito_tmr"],
+            timeout=10,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        print("[SYS] No pude detener el servicio (¿sudo sin NOPASSWD?).")
+        print("[SYS] Ejecuta:  sudo systemctl stop carrito_tmr")
+        sys.exit(1)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f"[SYS] Error deteniendo servicio: {e}")
+        sys.exit(1)
+    time.sleep(0.5)  # dar tiempo al kernel a liberar los pines
+    print("[SYS] Servicio detenido — GPIO libre.")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTES HARDWARE (NO MODIFICAR SIN CAMBIAR EL CABLEADO)
@@ -48,7 +87,7 @@ SERVO_CENTER      = 90.0    # grados
 SERVO_MIN         = 45.0    # límite físico izquierda
 SERVO_MAX         = 135.0   # límite físico derecha
 TOF_I2C_BUS       = 4       # Bus I2C via dtoverlay (GPIO 23=SDA, 22=SCL)
-TOF_XSHUT_PIN     = 17      # GPIO XSHUT del VL53L0X frontal
+TOF_XSHUT_PIN     = 24      # constante inerte — DistanceSensor lee config.py:PIN_TOF_XSHUT_FRONT directamente
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTES DE COMPORTAMIENTO
@@ -194,6 +233,7 @@ class VehicleTMR:
                 dt    = now - t_last
                 t_last = now
 
+                self._pump_gamepad_events()
                 self._process_gamepad()
                 self._update_vision()
                 self._run_mode(dt)
@@ -212,26 +252,48 @@ class VehicleTMR:
     # ─── Gamepad ─────────────────────────────────────────────────────────────
 
     def _init_gamepad(self) -> None:
+        """
+        Inicializa el subsistema de joystick de pygame. La conexión real al
+        primer mando ocurre en `_pump_gamepad_events()` (vía evento
+        JOYDEVICEADDED de SDL2), así que el sistema arranca aunque el control
+        esté apagado y se enganchará automáticamente cuando se prenda.
+        """
         try:
             import pygame
             pygame.init()
             pygame.joystick.init()
-            if pygame.joystick.get_count() > 0:
-                self._joystick = pygame.joystick.Joystick(0)
-                self._joystick.init()
-                print(f"[PAD] Mando conectado: {self._joystick.get_name()}")
-            else:
-                print("[PAD] Sin mando detectado — solo modo autónomo disponible.")
+            print("[PAD] Esperando mando — se enganchará automáticamente al prenderlo.")
         except Exception as e:
             print(f"[PAD] pygame no disponible: {e}")
 
-    def _process_gamepad(self) -> None:
-        if self._joystick is None:
-            return
+    def _pump_gamepad_events(self) -> None:
+        """
+        Drena la cola de eventos SDL para mantener el estado del joystick
+        actualizado y reaccionar a JOYDEVICEADDED/REMOVED.  Se llama una vez
+        por iteración del bucle principal.
+        """
         try:
             import pygame
-            pygame.event.pump()
         except Exception:
+            return
+        for event in pygame.event.get():
+            if event.type == pygame.JOYDEVICEADDED:
+                try:
+                    joy = pygame.joystick.Joystick(event.device_index)
+                    joy.init()
+                    self._joystick = joy
+                    self._btn_prev.clear()
+                    print(f"[PAD] Mando conectado: {joy.get_name()}")
+                except Exception as e:
+                    print(f"[PAD] Error al enganchar mando: {e}")
+            elif event.type == pygame.JOYDEVICEREMOVED:
+                if self._joystick is not None:
+                    print("[PAD] Mando desconectado — esperando reconexión...")
+                self._joystick = None
+                self._btn_prev.clear()
+
+    def _process_gamepad(self) -> None:
+        if self._joystick is None:
             return
 
         now = time.monotonic()
@@ -282,8 +344,16 @@ class VehicleTMR:
     def _set_mode(self, mode: str) -> None:
         if mode != self._mode:
             print(f"[MODE] {self._mode} → {mode}")
-            if self._mode == self.Mode.VISION and _DISPLAY:
+            # Cerrar la ventana de debug al salir de un modo que la usa
+            # (VISION o AUTONOMOUS) hacia uno que no (STANDBY / MANUAL).
+            display_modes = (self.Mode.VISION, self.Mode.AUTONOMOUS)
+            if (_DISPLAY and self._mode in display_modes
+                    and mode not in display_modes):
                 cv2.destroyAllWindows()
+            # VISION usa el PID solo para preview — al entrar/salir lo
+            # reseteamos para que el integrador no se contamine entre modos.
+            if mode == self.Mode.VISION or self._mode == self.Mode.VISION:
+                self.pid.reset()
         self._mode = mode
         self._last_mode_t = time.monotonic()
 
@@ -326,10 +396,12 @@ class VehicleTMR:
             case self.Mode.MANUAL:
                 self._do_manual()
             case self.Mode.VISION:
-                self._do_vision()
+                self._do_vision(dt)
             case self.Mode.AUTONOMOUS:
                 self.fsm.update(dt)
                 self._log_autonomous()
+                if _DISPLAY:
+                    self._render_debug_view(mode_label="AUT")
 
     def _log_autonomous(self) -> None:
         """Línea de status del modo autónomo — incluye lo que ve YOLO."""
@@ -425,13 +497,53 @@ class VehicleTMR:
               f"signs:{sign_txt}   ",
               end="", flush=True)
 
-    def _do_vision(self) -> None:
-        """Debug de visión — motores OFF, muestra pipeline en pantalla."""
+    def _do_vision(self, dt: float) -> None:
+        """Debug de visión — motores OFF, muestra pipeline + PID en pantalla."""
         self.motor.brake()
         self.steering.center()
         self.signals.set_mode(SignalMode.OFF)
         self.brake_light.off()
 
+        if self.camera.get_frame() is None:
+            return
+
+        # PID — solo simulación. El servo NO se mueve; ya quedó en center().
+        # En AUTONOMOUS la FSM calcula el PID; aquí lo hacemos a mano para
+        # poder visualizarlo igualmente.
+        self.pid.compute(self._last_lane.error_px, dt)
+
+        if _DISPLAY:
+            self._render_debug_view(mode_label="VIS")
+
+        # Log a consola siempre (con --display y sin él).
+        dets = self.sign_det.get_detections()
+        sign_txt = ", ".join(f"{d.label}({d.confidence:.0%})" for d in dets) or "—"
+        lidar_txt = f"{self.sensor.front_mm:.0f}" if self.sensor.front_mm else "---"
+        angle_target = max(
+            SERVO_MIN, min(SERVO_MAX, SERVO_CENTER + self.pid.last_output)
+        )
+        print(f"\r[VIS] err:{self._last_lane.error_px:+.0f}px "
+              f"conf:{self._last_lane.confidence:.0%}  "
+              f"P:{self.pid.last_p:+5.2f} I:{self.pid.last_i:+5.2f} "
+              f"D:{self.pid.last_d:+5.2f}  corr:{self.pid.last_output:+5.2f}d "
+              f"angle:{angle_target:5.1f}d  lidar:{lidar_txt}mm  "
+              f"signs:{sign_txt}   ",
+              end="", flush=True)
+
+    # ─── Render compartido (VISION + AUTONOMOUS) ──────────────────────────────
+
+    def _render_debug_view(self, mode_label: str) -> None:
+        """
+        Dibuja una sola ventana con TODO el debug visual:
+          • Frame anotado con la línea central del carril detectado.
+          • Mosaico superior: BEV (vista cenital) + máscara HSV.
+          • Bounding boxes de YOLO con etiqueta + confianza + distancia.
+          • Panel inferior izquierdo: valores PID (P/I/D/corr) y error.
+          • Panel inferior derecho: lista de objetos detectados con su nombre.
+
+        Llamado tanto desde VISION como desde AUTONOMOUS cuando --display
+        está activo. No bloquea: cv2.waitKey(1).
+        """
         frame = self.camera.get_frame()
         if frame is None:
             return
@@ -440,39 +552,72 @@ class VehicleTMR:
         dets  = self.sign_det.get_detections()
         lidar = self.sensor.front_mm
 
-        # Dibujar pipeline en consola o ventana
-        if _DISPLAY:
-            vis = self.lane_pipe.draw_debug(frame, lane)
+        # Frame con línea central del carril dibujada por el pipeline.
+        vis = self.lane_pipe.draw_debug(frame, lane)
 
-            # BEV y máscara si debug está activo
-            if lane.bev_frame is not None:
-                small_bev  = cv2.resize(lane.bev_frame,  (320, 180))
-                small_mask = cv2.resize(lane.mask_frame, (320, 180))
-                vis[0:180, 0:320]   = small_bev
-                vis[0:180, 320:640] = small_mask
+        # ── Mosaico BEV + máscara (ojo de águila + filtro) ──
+        if lane.bev_frame is not None and lane.mask_frame is not None:
+            vis[0:180, 0:320]   = cv2.resize(lane.bev_frame,  (320, 180))
+            vis[0:180, 320:640] = cv2.resize(lane.mask_frame, (320, 180))
+            cv2.putText(vis, "BEV (ojo de aguila)", (8, 14),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+            cv2.putText(vis, "Mascara HSV blanco",   (328, 14),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
-            # Bboxes YOLO
-            for d in dets:
-                cv2.rectangle(vis, (d.x1, d.y1), (d.x2, d.y2), (0, 0, 255), 2)
-                cv2.putText(vis, f"{d.label} {d.confidence:.0%}",
-                            (d.x1, max(d.y1-6, 12)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0,0,255), 1)
+        # ── Bounding boxes YOLO ──
+        for d in dets:
+            cv2.rectangle(vis, (d.x1, d.y1), (d.x2, d.y2), (0, 0, 255), 2)
+            dist_txt = f" {(d.distance_m or 0)*100:.0f}cm" if d.distance_m else ""
+            cv2.putText(vis, f"{d.label} {d.confidence:.0%}{dist_txt}",
+                        (d.x1, max(d.y1 - 6, 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
 
-            # Info
-            lidar_txt = f"{lidar:.0f}mm" if lidar else "---"
-            cv2.putText(vis, f"Lidar:{lidar_txt}  FPS:30",
-                        (8, CAMERA_H - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 220, 0), 1)
+        angle_target = max(
+            SERVO_MIN, min(SERVO_MAX, SERVO_CENTER + self.pid.last_output)
+        )
 
-            cv2.imshow("TMR 2026 — Vision Debug", vis)
-            cv2.waitKey(1)
+        # ── Panel inferior izquierdo: PID + error ──
+        self._draw_panel(vis, x=8, y=200, w=320, h=160, lines=[
+            f"MODO  : {mode_label}",
+            f"err   :{lane.error_px:+7.1f}px  conf:{lane.confidence:.0%}",
+            f"P     :{self.pid.last_p:+7.2f}   kp={self.pid.kp:.3f}",
+            f"I     :{self.pid.last_i:+7.2f}   ki={self.pid.ki:.3f}",
+            f"D     :{self.pid.last_d:+7.2f}   kd={self.pid.kd:.3f}",
+            f"corr  :{self.pid.last_output:+7.2f}d -> servo {angle_target:5.1f}d",
+            f"lidar :{lidar:.0f}mm" if lidar else "lidar :---",
+        ])
+
+        # ── Panel inferior derecho: objetos detectados ──
+        if dets:
+            obj_lines = ["OBJETOS DETECTADOS:"]
+            for d in dets[:5]:
+                dist = f" @{(d.distance_m or 0)*100:.0f}cm" if d.distance_m else ""
+                obj_lines.append(f"- {d.label}  {d.confidence:.0%}{dist}")
         else:
-            sign_txt = ", ".join(f"{d.label}({d.confidence:.0%})" for d in dets) or "—"
-            lidar_txt = f"{lidar:.0f}" if lidar else "---"
-            print(f"\r[VIS] err:{lane.error_px:+.0f}px "
-                  f"conf:{lane.confidence:.0%}  "
-                  f"lidar:{lidar_txt}mm  signs:{sign_txt}   ",
-                  end="", flush=True)
+            obj_lines = ["OBJETOS DETECTADOS:", "- (ninguno)"]
+        self._draw_panel(vis, x=336, y=200, w=296, h=160, lines=obj_lines)
+
+        # ── Estado FSM en la barra inferior ──
+        try:    fsm_txt = f"FSM:{self.fsm.state.name}"
+        except Exception: fsm_txt = ""
+        cv2.putText(vis, f"{mode_label}  {fsm_txt}  duty:{self.motor.current_duty:+.0f}%",
+                    (8, CAMERA_H - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2, cv2.LINE_AA)
+
+        cv2.imshow("TMR 2026 - Vision Debug", vis)
+        cv2.waitKey(1)
+
+    @staticmethod
+    def _draw_panel(img, x: int, y: int, w: int, h: int, lines: list[str]) -> None:
+        """Caja semitransparente con texto multi-línea."""
+        ov = img.copy()
+        cv2.rectangle(ov, (x, y), (x + w, y + h), (0, 0, 0), -1)
+        cv2.addWeighted(ov, 0.55, img, 0.45, 0, dst=img)
+        cv2.rectangle(img, (x, y), (x + w, y + h), (255, 220, 0), 1)
+        for i, line in enumerate(lines):
+            cv2.putText(img, line, (x + 8, y + 20 + i * 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (255, 220, 0), 1, cv2.LINE_AA)
 
     # ─── Apagado limpio ───────────────────────────────────────────────────────
 
@@ -500,4 +645,5 @@ class VehicleTMR:
 
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    _release_gpio_from_systemd()
     VehicleTMR().run()

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Everything under `TMR2026/` is the current vehicle. Legacy prototypes live in `_legacy/` and must not be imported from TMR2026.
 
-**Root `main.py` is a loader** — it `chdir`s into `TMR2026/` and runs `TMR2026/main.py` with `runpy` so imports like `from hardware.motor import MotorDriver` keep working. The systemd service (`TMR2026/systemd/carrito_tmr.service`) still points directly to `TMR2026/main.py`; root `main.py` is only for manual execution.
+**Root `main.py` is a loader** — it `chdir`s into `TMR2026/` and runs `TMR2026/main.py` with `runpy` so imports like `from hardware.motor import MotorDriver` keep working. The systemd service (`TMR2026/systemd/carrito_tmr.service`) points directly to `TMR2026/main.py --display` and starts under `graphical.target` (i.e. after the desktop is ready), with `DISPLAY=:0` and `XAUTHORITY=/home/angel01/.Xauthority` exported, so OpenCV can open a window on the HDMI monitor when VISION/AUTONOMOUS mode is entered. Root `main.py` is only for manual execution.
 
 ### Hardware Target
 
@@ -15,7 +15,7 @@ Raspberry Pi 5 with:
 - IBT-2 H-bridge motor: BCM 18 (RPWM) + 13 (LPWM), `R_EN`/`L_EN` tied to 3.3 V
 - PCA9685 servo on I²C bus 3 (dtoverlay GPIO 0/1), channel 0
 - 2× VL53L0X ToF on I²C bus 4 (dtoverlay GPIO 23/22), addresses 0x30 (front) / 0x29 (rear), XSHUT pin `TMR2026/config.py:PIN_TOF_XSHUT_FRONT`
-- Gamepad via `pygame` (PS4/Xbox) — buttons: A=MANUAL, B=VISION, X=AUTONOMOUS, Start=EMERGENCY
+- Gamepad via `pygame` (PS4/Xbox) — buttons: A=MANUAL, B=VISION, X=AUTONOMOUS, Start=EMERGENCY. Hot-plug supported: `main.py:_pump_gamepad_events()` runs every loop iteration and reacts to SDL2 `JOYDEVICEADDED` / `JOYDEVICEREMOVED` events, so the PS4 (paired+trusted as `A0:5A:5F:0B:F7:5A`) connects automatically when powered on, even if the system booted without it. BlueZ has `AutoEnable=true` in `/etc/bluetooth/main.conf` so the BT controller comes up at boot ready to accept the trusted device.
 - GPIO LEDs for turn signals / hazards / brake — pins defined in `TMR2026/vision_config.yaml` → `gpio:` and mirrored in `config.py`
 
 GPIO is accessed via `lgpio` (chip 4 on Pi 5) with a `RPi.GPIO` fallback.
@@ -77,7 +77,20 @@ The servo is mounted reversed on this chassis. `config.py:STEERING_INVERTED = Tr
 ### Telemetry log lines
 - `_do_manual` prints (carriage-return updated): `[MAN] steer:±x.xx (angle°)  t:y.yy  b:z.zz  duty:±NN%  signs:<label>@<cm>cm, …`
 - `_log_autonomous` (called every tick after `fsm.update`) prints: `[AUT] <STATE>  err:±NNNpx  angle:NN.N°  duty:±NN%  lidar:NNNNmm  signs:<label>@<cm>cm, …`
-- `signs:` field shows up to 2 detections from `SignDetector.get_detections()`; `—` if empty. This is the only place YOLO output is currently surfaced to the operator.
+- `_do_vision` prints `[VIS] err:±Npx conf:NN%  P/I/D:±x.xx  corr:±x.xx° angle:NN.N° lidar:NNmm signs:…` — same fields as the on-screen panel.
+- `signs:` field shows up to 2 detections from `SignDetector.get_detections()`; `—` if empty.
+- `PIDController` exposes the last computed components via public attrs `last_error / last_p / last_i / last_d / last_output`. Read-only — they are written every `compute()` and reset by `reset()`. Used by both the on-screen overlay and console logs.
+
+### Debug display (`--display` flag)
+When `python main.py --display` is set, the system opens a single OpenCV window `TMR 2026 - Vision Debug` whenever the mode is **VISION** *or* **AUTONOMOUS**. The window is closed automatically when leaving those modes for STANDBY/MANUAL.
+- Renderer lives in `main.py:_render_debug_view(mode_label)` and is shared by both modes — do not duplicate it per mode.
+- Layout: top half = BEV (left) + HSV white mask (right), bottom half = annotated frame with lane center line + YOLO bboxes.
+- Two side-by-side overlay panels at y≈200: left = PID telemetry (`err`, `P/I/D`, `corr`, target servo angle, lidar); right = `OBJETOS DETECTADOS` list with up to 5 sign labels + confidence + distance.
+- VISION mode brakes motors and centers steering, then *simulates* the PID purely for the overlay (servo never moves). `_set_mode` calls `pid.reset()` on entry/exit of VISION so the integrator does not contaminate AUTONOMOUS afterward.
+- AUTONOMOUS mode does its normal work (FSM updates servo + motor) and additionally calls `_render_debug_view(mode_label="AUT")` after `_log_autonomous()`.
+
+### Diagnostic preview tool: `tools/test_camera.py`
+The "common test" entry point for camera/vision iteration. Imports CameraStream + LanePipeline + PIDController + SignDetector and renders the same overlay as `_render_debug_view` — but **never imports any GPIO hardware**, so it is safe to run with the systemd service active and on dev machines. Flags: `--no-yolo` skips loading the YOLO weights for instant startup. Exit with `q` or ESC.
 
 ### Alternative modules (exist but not wired into main.py)
 These are full implementations kept for future wiring. Treat as library code:
@@ -92,6 +105,7 @@ These are full implementations kept for future wiring. Treat as library code:
 ### Personal test scripts (do not wire into main.py)
 - `vision_module.py` — user's standalone camera experiment with its own 9-state FSM and its own hazard/turn-signal implementation via `lgpio` chip 4. Pins come from `vision_config.yaml`.
 - `test_gamepad.py`, `test_servo.py`, `test_vision.py` — diagnostics.
+- `TMR2026/tools/test_camera.py` — official preview tool (camera + lane + PID + YOLO, no motors). See "Diagnostic preview tool" above.
 
 ## YOLO Models
 
@@ -111,6 +125,11 @@ These are full implementations kept for future wiring. Treat as library code:
 - **Steering inversion lives in `SteeringDriver.set_angle()` only** (driven by `config.py:STEERING_INVERTED`). Never re-invert in FSM, PID, signals, or per-mode code; always trust `current_angle` as the logical value.
 - **`signals.tick()` must be called every main-loop iteration** (after `_run_mode()`), or LEDs freeze mid-blink.
 
+## Vision tuning notes
+
+- HSV white filter in `vision/lane_pipeline.py` is currently set for **medium-low light** (e.g. phone flashlight illumination, not just direct lamp): `HSV_WHITE_LO = [0, 0, 130]`, `HSV_WHITE_HI = [179, 60, 255]`. If the black plastic track is leaking into the mask under bright light, raise `V_min` toward 150–160; if dim conditions still miss the lines, lower `V_min` toward 100–110.
+- Inspect the live mask via the top-right tile of `python main.py --display` (in VISION/AUTONOMOUS) or via `python tools/test_camera.py --no-yolo`.
+
 ## Known inconsistencies
 
 - `TMR2026/main.py:46` hardcodes `SERVO_CHANNEL=0` but `config.py:SERVO_CHANNEL=15`. `main.py` wins at runtime because it doesn't import `SERVO_CHANNEL` from config.
@@ -119,5 +138,5 @@ These are full implementations kept for future wiring. Treat as library code:
 
 ## Common Pi-side gotchas
 
-- `lgpio.error: 'GPIO not allocated'` on `python main.py` usually means the systemd service is holding pins: `sudo systemctl stop carrito_tmr` before manual runs.
+- `lgpio.error: 'GPIO not allocated'` on `python main.py` means the systemd service is holding pins. `TMR2026/main.py:_release_gpio_from_systemd()` now detects this on startup and runs `sudo -n systemctl stop carrito_tmr` automatically (passwordless sudo is configured for `angel01`). The function skips itself when launched *by* systemd (`INVOCATION_ID` env var is set), so the service can still run normally at boot.
 - Old folders from the pre-reorg layout (`AUTO_YOLO/`, `CAMARA/`, `CONTROL/`, …) may need `sudo rm -rf` if they were created under root by a prior `sudo` run.

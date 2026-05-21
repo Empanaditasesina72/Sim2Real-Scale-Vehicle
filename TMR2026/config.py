@@ -19,13 +19,14 @@ PIN_LED_STOP   = 25   # Parpadea durante parada en STOP
 PIN_LED_STATUS = 26   # Estado general del sistema
 
 # --- LEDs de señalización vehicular (direccionales + freno) -------------------
-# Pin 19 / 20 coinciden con vision_config.yaml (led_turn_left / led_turn_right)
-# para reutilizar el cableado del módulo de prueba vision_module.py.
-# Pin 16 para freno — libre, no choca con nada en TMR2026 ni en el YAML.
-# NO usar 17 (PIN_TOF_XSHUT_FRONT), 5/6 (hazard_left/right del YAML), 18/13 (motor).
-PIN_LED_TURN_LEFT  = 19
-PIN_LED_TURN_RIGHT = 20
-PIN_LED_BRAKE      = 16
+# Cableado físico actual del coche:
+#   Direccional IZQ (ámbar front + rojo rear) → Pin 11 / GPIO 17
+#   Direccional DER (ámbar front + rojo rear) → Pin 29 / GPIO 5
+#   Luces de freno (2 LEDs rojos en paralelo) → Pin 31 / GPIO 6
+# El PIN_TOF_XSHUT_FRONT se movió a GPIO 24 para liberar GPIO 17.
+PIN_LED_TURN_LEFT  = 17
+PIN_LED_TURN_RIGHT = 5
+PIN_LED_BRAKE      = 6
 SIGNAL_BLINK_HZ    = 2.0   # Parpadeo direccionales / hazard (reglamento TMR)
 
 # ============================================================
@@ -37,8 +38,10 @@ SIGNAL_BLINK_HZ    = 2.0   # Parpadeo direccionales / hazard (reglamento TMR)
 # I²C BUS 4  (GPIO 23=SDA, GPIO 22=SCL) — VL53L0X sensores
 # dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=23,i2c_gpio_scl=22
 # ============================================================
-# Dos sensores VL53L0X en el mismo bus — se diferencian por XSHUT
-PIN_TOF_XSHUT_FRONT = 17   # GPIO 17, Pin 11
+# Dos sensores VL53L0X en el mismo bus — se diferencian por XSHUT.
+# El frontal NO está cableado actualmente (GPIO 24 reservado para futuro);
+# distance_sensor.py degrada con gracia a "rear-only" si el frontal no responde.
+PIN_TOF_XSHUT_FRONT = 24   # GPIO 24, Pin 18 — libre, listo para futuro lidar frontal
 PIN_TOF_XSHUT_REAR  = 27   # GPIO 27, Pin 13
 TOF_ADDR_FRONT      = 0x30 # dirección cambiada al inicializar
 TOF_ADDR_REAR       = 0x29 # dirección por defecto

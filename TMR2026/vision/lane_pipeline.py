@@ -71,9 +71,13 @@ class LanePipeline:
     # ── Filtro HSV para blanco ────────────────────────────────────────────────
     # Pista negra brillante → reflejos tienen S alto (gris especular) o S muy bajo
     # pero V muy alto (sobreexposición puntual).
-    # Blanco real: S bajo, V alto pero no máximo.
-    HSV_WHITE_LO = np.array([  0,  0, 190])   # H, S_min=0, V_min=190
-    HSV_WHITE_HI = np.array([179, 45, 255])   # H, S_max=45 (rechaza grises brillantes)
+    # Blanco real: S bajo, V medio-alto.
+    #
+    # V_min=130 funciona desde luz tenue (linterna del celular ~100–200 lx)
+    # hasta luz fuerte (lámpara directa). Si el plástico negro empieza a
+    # contar como "blanco" en sombras profundas, sube V_min a 150–160.
+    HSV_WHITE_LO = np.array([  0,  0, 130])   # H, S_min=0, V_min=130
+    HSV_WHITE_HI = np.array([179, 60, 255])   # H, S_max=60 (rechaza grises brillantes)
 
     # ── Sliding Windows ───────────────────────────────────────────────────────
     N_WINDOWS  = 9     # Número de franjas horizontales en el BEV

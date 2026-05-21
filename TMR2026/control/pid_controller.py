@@ -54,6 +54,13 @@ class PIDController:
         self._last_error = 0.0  # Para derivada sobre error
         self._last_time  = time.monotonic()
 
+        # Componentes del último cálculo (lectura para telemetría / overlay).
+        self.last_error  = 0.0
+        self.last_p      = 0.0
+        self.last_i      = 0.0
+        self.last_d      = 0.0
+        self.last_output = 0.0
+
     # ----------------------------------------------------------
     def compute(self, measurement: float, dt: float | None = None) -> float:
         """
@@ -101,7 +108,15 @@ class PIDController:
             self._last_error = error
 
         output = p_out + i_out + d_out
-        return max(self.output_limits[0], min(self.output_limits[1], output))
+        output = max(self.output_limits[0], min(self.output_limits[1], output))
+
+        self.last_error  = error
+        self.last_p      = p_out
+        self.last_i      = i_out
+        self.last_d      = d_out
+        self.last_output = output
+
+        return output
 
     def reset(self):
         """Reinicia el estado interno sin cambiar las ganancias."""
@@ -109,6 +124,11 @@ class PIDController:
         self._last_input = 0.0
         self._last_error = 0.0
         self._last_time  = time.monotonic()
+        self.last_error  = 0.0
+        self.last_p      = 0.0
+        self.last_i      = 0.0
+        self.last_d      = 0.0
+        self.last_output = 0.0
 
     def update_gains(self, kp: float, ki: float, kd: float):
         self.kp = kp
