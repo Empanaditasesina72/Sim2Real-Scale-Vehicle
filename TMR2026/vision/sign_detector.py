@@ -73,7 +73,7 @@ class SignDetector:
     MAX_HZ = 12.0
 
     # Histéresis: una etiqueta se publica solo si aparece en N frames seguidos
-    HYSTERESIS_FRAMES = 3
+    HYSTERESIS_FRAMES = 2   # bajado de 3: detección más rápida
 
     def __init__(
         self,
@@ -263,7 +263,7 @@ class SignDetector:
 
                 # Ignorar bboxes muy pequeños (señal muy lejana)
                 area = (x2 - x1) * (y2 - y1)
-                if area < 400:
+                if area < 150:   # bajado de 400 para detectar señales más lejanas
                     continue
 
                 # Normalizar etiqueta

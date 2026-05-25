@@ -53,13 +53,15 @@ class LanePipeline:
 
     # ── Puntos de perspectiva BEV (fracción del ancho/alto del frame) ─────────
     # Trapecio en el frame original que se mapea a un rectángulo en BEV.
-    # CALIBRAR: ajustar en pista hasta que las líneas queden verticales.
+    # CALIBRADO para: cámara a 22 cm de altura, carro 20×35 cm.
+    # Con esta altura la perspectiva ve más piso → trapecio más ancho abajo
+    # y un poco más alto arriba para captar el carril más adelante.
     #   [bot-izq, bot-der, top-der, top-izq]
     BEV_SRC_RATIO = np.float32([
-        [0.08, 1.00],   # abajo-izquierda
-        [0.92, 1.00],   # abajo-derecha
-        [0.65, 0.55],   # arriba-derecha
-        [0.35, 0.55],   # arriba-izquierda
+        [0.05, 1.00],   # abajo-izquierda (más ancho)
+        [0.95, 1.00],   # abajo-derecha   (más ancho)
+        [0.60, 0.60],   # arriba-derecha  (un poco más arriba y estrecho)
+        [0.40, 0.60],   # arriba-izquierda
     ])
     BEV_DST_RATIO = np.float32([
         [0.20, 1.00],
@@ -85,7 +87,8 @@ class LanePipeline:
     MIN_PIX    = 40    # Mínimo de píxeles blancos para aceptar una ventana
 
     # ── Suavizado temporal ────────────────────────────────────────────────────
-    EMA_ALPHA  = 0.65  # Factor EMA (más alto = responde más rápido, más ruidoso)
+    EMA_ALPHA  = 0.45  # Bajado de 0.65 → menos oscilación del servo
+                       # (más alto = responde rápido pero más ruidoso)
 
     # ── Sesgo lateral dentro del carril ───────────────────────────────────────
     # 0.0 = pegado a la línea izquierda

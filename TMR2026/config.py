@@ -105,8 +105,10 @@ CLASSES_OF_INTEREST = {
 # ============================================================
 WHEELBASE    = 0.258   # Distancia entre ejes
 TRACK_WIDTH  = 0.172   # Ancho entre ruedas delanteras
-CAR_LENGTH   = 0.420   # Largo total
-CAR_WIDTH    = 0.200   # Ancho total
+CAR_LENGTH   = 0.350   # Largo total (medido: 35 cm)
+CAR_WIDTH    = 0.200   # Ancho total (medido: 20 cm)
+CAMERA_HEIGHT_M = 0.22 # Altura de la cámara desde el piso (medido: 22 cm)
+                       # Usado para calibrar la transformación BEV en lane_pipeline.py
 
 MAX_STEERING_ANGLE_DEG = 35.0  # Límite físico del servo en grados desde centro
 
@@ -146,7 +148,8 @@ LANE_LOST_THRESHOLD_PX = 280
 
 # Confianza mínima del detector de carril para que el autónomo avance
 # Por debajo de este valor = coche fuera de la pista → freno
-LANE_MIN_CONFIDENCE = 0.30
+# Bajado de 0.30 → 0.20 para aceptar tramos con una sola línea visible
+LANE_MIN_CONFIDENCE = 0.20
 
 # ============================================================
 # COMPORTAMIENTO SEÑAL STOP

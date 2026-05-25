@@ -98,7 +98,7 @@ CAMERA_H          = 480
 CAMERA_FPS        = 30
 AWB_WARMUP_S      = 2.0     # segundos estabilización AE/AWB
 YOLO_MODEL        = "weights/tmr_signs.pt"
-YOLO_CONF         = 0.55
+YOLO_CONF         = 0.30      # bajado de 0.55 para detectar señales lejanas/borrosas
 YOLO_IMGSZ        = 320
 
 # PID de dirección (error en px → corrección en grados)
