@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(winget upgrade:*)",
+      "Bash(pip show:*)",
+      "Bash(pip --version)",
+      "Bash(pip install:*)",
+      "Bash(python -c \"import markitdown; print\\(markitdown.__version__\\)\")",
+      "Bash(python -c \"from markitdown import MarkItDown; md = MarkItDown\\(\\); print\\('OK — markitdown', md.__class__.__module__\\)\")",
+      "Bash(code:*)",
+      "Bash(git -C C:/Users/Angel/Documents/GitHub/Carrito log --oneline -8)"
+    ]
+  }
+}
