@@ -95,10 +95,10 @@ class AutonomousFSM:
 
     # Umbral de distancia (mm) calculado por bbox para confirmar parada.
     # Se usa SOLO si el lidar no da lectura (fallback). El valor real al
-    # quedar quieto suele ser ~80 mm menor por la inercia del soft-cut,
-    # con 350 mm aquí el carro debe quedar dentro del rango 240–300 mm del
-    # reglamento TMR (270 ± 30 mm).
-    SIGN_BBOX_STOP_MM = 350
+    # quedar quieto suele ser ~30-50 mm menor por la inercia del soft-cut.
+    # Con 320 mm aquí y la calibración pinhole nueva (señal de ~4 cm) el
+    # carro queda dentro del rango 240–300 mm del reglamento TMR (270±30).
+    SIGN_BBOX_STOP_MM = 320
 
     def __init__(self, motor, steering, pid, signals=None, brake_light=None):
         """

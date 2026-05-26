@@ -23,8 +23,9 @@ import numpy as np
 try:
     from config import STOP_SIGN_REAL_HEIGHT_M, CAMERA_FOCAL_LENGTH_PX
 except ImportError:
-    # Valores de respaldo si no se corre desde TMR2026/ como CWD
-    STOP_SIGN_REAL_HEIGHT_M = 0.18
+    # Valores de respaldo si no se corre desde TMR2026/ como CWD.
+    # Calibrados 2026-05-25 con señal mini (~4 cm) sobre cono.
+    STOP_SIGN_REAL_HEIGHT_M = 0.04
     CAMERA_FOCAL_LENGTH_PX  = 490.0
 
 
