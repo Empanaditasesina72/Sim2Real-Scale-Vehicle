@@ -113,6 +113,14 @@ CAMERA_HEIGHT_M = 0.22 # Altura de la cámara desde el piso (medido: 22 cm)
 MAX_STEERING_ANGLE_DEG = 35.0  # Límite físico del servo en grados desde centro
 
 # ============================================================
+# DIMENSIONES DE LA PISTA  (metros)
+# ============================================================
+# Ancho del carril medido de línea a línea, INCLUYENDO el grosor de las líneas.
+# Con CAR_WIDTH=0.20 m, el carro tiene 0.17 m de margen lateral por carril
+# (8.5 cm a cada lado si va centrado).
+LANE_WIDTH_M = 0.54
+
+# ============================================================
 # VL53L0X  (sensor ToF frontal)
 # ============================================================
 TOF_TIMING_BUDGET_US = 20_000  # 20 ms — balance velocidad/precisión
@@ -160,14 +168,17 @@ STOP_TOLERANCE_MM    = 30    # mm — ventana de aceptación
 STOP_WAIT_SEC        = 5.0   # segundos de pausa obligatoria
 STOP_LED_BLINK_HZ    = 2.0   # frecuencia de parpadeo LED
 
-# Altura real de la señal STOP usada en pruebas (para estimación de distancia
-# con bbox). Calibrado el 2026-05-25 midiendo: señal a 37 cm reales reportaba
-# 163 cm con valor 0.18 m → señal verdadera ≈ 4 cm de alto.
+# Dimensiones reales de la señal STOP (medidas 2026-05-25):
+#   • Octágono rojo .................... 4 cm de alto  ← LO QUE EL DETECTOR MIDE
+#   • Octágono + tapita + palo (total) . 17 cm
+# El detector pinhole solo "ve" el octágono rojo (su HSV es lo único filtrado),
+# así que aquí va únicamente la altura del octágono.
 # Si cambias la señal por otra de tamaño distinto, ACTUALIZA aquí:
-#   • 4 cm  (mini impresa sobre cono)        → 0.04
+#   • 4 cm  (mini sobre cono)                  → 0.04
 #   • 18 cm (señal de competencia TMR oficial) → 0.18
-STOP_SIGN_REAL_HEIGHT_M = 0.04   # metros — señal mini real medida
-CAMERA_FOCAL_LENGTH_PX  = 490.0  # píxeles — calibrar con tablero si es posible
+STOP_SIGN_REAL_HEIGHT_M  = 0.04   # metros — altura del octágono rojo real
+STOP_SIGN_TOTAL_HEIGHT_M = 0.17   # metros — solo informativo (palo+tapita+octágono)
+CAMERA_FOCAL_LENGTH_PX   = 490.0  # píxeles — calibrar con tablero si es posible
 
 # ============================================================
 # EMERGENCIA

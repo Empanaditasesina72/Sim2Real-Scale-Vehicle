@@ -27,6 +27,11 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 
+try:
+    from config import LANE_WIDTH_M
+except ImportError:
+    LANE_WIDTH_M = 0.54   # m — ancho real medido del carril (línea a línea)
+
 
 @dataclass
 class LaneResult:
@@ -70,6 +75,14 @@ class LanePipeline:
         [0.80, 0.00],
         [0.20, 0.00],
     ])
+    # En BEV de 640 px de ancho, los puntos arriba mapean las líneas blancas
+    # a x=128 y x=512 (separación 384 px). Como el carril real mide 54 cm
+    # → escala BEV = 384/54 = 7.1 px/cm. Sirve para validar coherencia.
+    BEV_SCALE_PX_PER_CM = 384.0 / (LANE_WIDTH_M * 100.0)
+    # Tolerancia: la distancia entre líneas en BEV no debe diferir más del
+    # 40 % del valor teórico. Sirve para descartar detecciones espurias
+    # donde el sliding window agarra dos manchas que no son un carril.
+    LANE_WIDTH_TOL = 0.40
 
     # ── Filtro HSV para blanco ────────────────────────────────────────────────
     # Pista negra brillante + entorno claro (pared, ropa, otros objetos blancos
@@ -276,6 +289,31 @@ class LanePipeline:
         if left_centers and right_centers:
             mean_l = float(np.mean(left_centers))
             mean_r = float(np.mean(right_centers))
+            # Validación de ancho: la separación entre líneas debe parecerse
+            # al ancho real del carril proyectado al BEV. Si está fuera del
+            # ±LANE_WIDTH_TOL, asumimos que una de las dos detecciones es ruido
+            # (e.g. una mancha lejana) y degradamos a "una sola línea".
+            expected_px = LANE_WIDTH_M * 100.0 * self.BEV_SCALE_PX_PER_CM
+            measured_px = mean_r - mean_l
+            ratio = measured_px / max(1.0, expected_px)
+            valid_width = abs(ratio - 1.0) <= self.LANE_WIDTH_TOL
+
+            if not valid_width:
+                # Conservamos solo la línea con MÁS centros detectados
+                if len(left_centers) >= len(right_centers):
+                    lane_cx    = mean_l + w * (0.20 + 0.16 * bias)
+                    confidence = 0.5
+                    left_x_avg  = int(mean_l)
+                    right_x_avg = None
+                else:
+                    lane_cx    = mean_r - w * (0.36 - 0.16 * bias)
+                    confidence = 0.5
+                    left_x_avg  = None
+                    right_x_avg = int(mean_r)
+                error = float(lane_cx - frame_cx)
+                return LaneResult(error_px=error, confidence=confidence,
+                                  left_x=left_x_avg, right_x=right_x_avg)
+
             # Punto objetivo dentro del carril según sesgo:
             #   bias=0.5 → (mean_l + mean_r)/2   (centro)
             #   bias=1.0 → mean_r                (línea derecha)
