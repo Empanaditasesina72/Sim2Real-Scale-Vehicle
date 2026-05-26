@@ -53,14 +53,16 @@ class LanePipeline:
 
     # ── Puntos de perspectiva BEV (fracción del ancho/alto del frame) ─────────
     # Trapecio en el frame original que se mapea a un rectángulo en BEV.
-    # CALIBRADO para: cámara a 22 cm de altura, pista negra con líneas blancas.
-    # Trapecio CERRADO para capturar SOLO la pista y nada del entorno alrededor.
+    # CALIBRADO para: cámara a 22 cm de altura.
+    # Trapecio ANCHO abajo y MÁS LEJOS arriba para ver toda la pista visible.
+    # El filtro HSV estricto (V>=200, S<=40) descarta solo entorno claro;
+    # el trapecio sí captura la pista entera.
     #   [bot-izq, bot-der, top-der, top-izq]
     BEV_SRC_RATIO = np.float32([
-        [0.15, 1.00],   # abajo-izquierda (margen lateral grande, ignora bordes)
-        [0.85, 1.00],   # abajo-derecha
-        [0.55, 0.62],   # arriba-derecha  (trapecio cerrado: foco en la pista)
-        [0.45, 0.62],   # arriba-izquierda
+        [0.05, 1.00],   # abajo-izquierda (muy ancho, ve los pies de las ruedas)
+        [0.95, 1.00],   # abajo-derecha
+        [0.62, 0.55],   # arriba-derecha  (más alto = ve más lejos)
+        [0.38, 0.55],   # arriba-izquierda
     ])
     BEV_DST_RATIO = np.float32([
         [0.20, 1.00],
@@ -84,9 +86,9 @@ class LanePipeline:
 
     # ── Sliding Windows ───────────────────────────────────────────────────────
     N_WINDOWS  = 9     # Número de franjas horizontales en el BEV
-    WIN_MARGIN = 60    # ±px alrededor del centro previo (más estrecho)
-    MIN_PIX    = 80    # Mínimo px blancos por ventana — subido de 40 → 80
-                       # para ignorar ruido suelto y manchas pequeñas
+    WIN_MARGIN = 70    # ±px alrededor del centro previo
+    MIN_PIX    = 60    # Mínimo px blancos por ventana (balance entre captar
+                       # líneas a lo lejos y rechazar manchas pequeñas)
 
     # ── Suavizado temporal ────────────────────────────────────────────────────
     EMA_ALPHA  = 0.45  # Bajado de 0.65 → menos oscilación del servo
@@ -111,9 +113,10 @@ class LanePipeline:
         self._debug = debug
         self._right_bias = max(0.0, min(1.0, float(right_bias)))
 
-        # ROI: ignorar la parte superior del frame (entorno, paredes, objetos)
-        # Subido de 50% a 55% para descartar más del entorno con la cámara a 22 cm.
-        self._roi_y = int(frame_h * 0.55)
+        # ROI: ignorar la mitad superior del frame. Volvimos a 50% para que
+        # el BEV capture más adelante (la pared/entorno ya lo descarta el
+        # filtro HSV estricto, no hace falta cortar tanto aquí).
+        self._roi_y = frame_h // 2
 
         # Calcular matrices de perspectiva
         src = self.BEV_SRC_RATIO.copy()
@@ -224,10 +227,11 @@ class LanePipeline:
         left_x   = int(np.argmax(hist[:mid]))
         right_x  = int(np.argmax(hist[mid:])) + mid
 
-        # Umbral del histograma: subido de 200 → 500 para descartar picos de
-        # ruido del entorno (paredes/cosas blancas fuera de la pista).
-        has_left  = hist[left_x]  > 500
-        has_right = hist[right_x] > 500
+        # Umbral del histograma para considerar que hay una línea. 300 es un
+        # balance: lo suficientemente alto para descartar ruido suelto pero
+        # bajo para detectar líneas a lo lejos en el BEV.
+        has_left  = hist[left_x]  > 300
+        has_right = hist[right_x] > 300
 
         if not has_left and not has_right:
             return LaneResult(error_px=self._smooth_error, confidence=0.0)

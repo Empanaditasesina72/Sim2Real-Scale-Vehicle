@@ -41,17 +41,29 @@ _RED_HSV_HI_2 = np.array([179, 255, 255])
 _PURPLE_HSV_LO = np.array([120,  60,  40])
 _PURPLE_HSV_HI = np.array([160, 255, 255])
 
-# Área mínima del contorno (px²) para considerarlo señal — ~15×15 px o más
-_COLOR_MIN_AREA = 600
-# Razón de aspecto permitida (ancho/alto). Una señal STOP es casi cuadrada.
-_COLOR_ASPECT_MIN = 0.55
-_COLOR_ASPECT_MAX = 1.80
+# Área mínima del contorno (px²). Subido de 600 → 1500 para evitar que
+# cajas/objetos rojos lejanos (que se ven pequeños) se confundan con STOP.
+# 1500 px ≈ 38×38 px, una señal real grande o de medio plano.
+_COLOR_MIN_AREA = 1500
+# Fracción mínima del bbox que debe estar pintada del color objetivo.
+# Una señal real tiene su rojo concentrado; una caja con detalles rojos
+# tiene baja "compacidad". Esto descarta blobs irregulares.
+_COLOR_FILL_RATIO_MIN = 0.55
+# Razón de aspecto permitida (ancho/alto). STOP octogonal ≈ 1.0,
+# rectangulares ≈ 0.7–1.3. Apretamos el rango para excluir rectángulos.
+_COLOR_ASPECT_MIN = 0.65
+_COLOR_ASPECT_MAX = 1.50
 
 
 def _detect_red_blob(frame_bgr: np.ndarray):
     """
     Devuelve (x1, y1, x2, y2, area) del contorno rojo/púrpura más grande,
     o None si no encuentra nada plausible.
+
+    Filtros aplicados:
+      • área >= _COLOR_MIN_AREA      → rechaza objetos lejanos
+      • aspect en [0.65, 1.50]       → rechaza cajas alargadas
+      • fill_ratio >= 0.55           → rechaza blobs huecos / irregulares
     """
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
     m1 = cv2.inRange(hsv, _RED_HSV_LO_1,    _RED_HSV_HI_1)
@@ -69,15 +81,20 @@ def _detect_red_blob(frame_bgr: np.ndarray):
     best_area = 0
     for c in cnts:
         x, y, w, h = cv2.boundingRect(c)
-        area = w * h
-        if area < _COLOR_MIN_AREA:
+        bbox_area = w * h
+        if bbox_area < _COLOR_MIN_AREA:
             continue
         aspect = w / max(1.0, h)
         if not (_COLOR_ASPECT_MIN <= aspect <= _COLOR_ASPECT_MAX):
             continue
-        if area > best_area:
-            best_area = area
-            best = (x, y, x + w, y + h, area)
+        # fill_ratio: cuánto del bbox está realmente pintado del color
+        contour_area = cv2.contourArea(c)
+        fill_ratio = contour_area / max(1.0, bbox_area)
+        if fill_ratio < _COLOR_FILL_RATIO_MIN:
+            continue
+        if bbox_area > best_area:
+            best_area = bbox_area
+            best = (x, y, x + w, y + h, bbox_area)
     return best
 
 
@@ -126,8 +143,10 @@ class SignDetector:
     # Frecuencia máxima del detector (Hz) — Pi 5 CPU puede con ~15 FPS a 320px
     MAX_HZ = 12.0
 
-    # Histéresis: una etiqueta se publica solo si aparece en N frames seguidos
-    HYSTERESIS_FRAMES = 2   # bajado de 3: detección más rápida
+    # Histéresis: una etiqueta se publica solo si aparece en N frames seguidos.
+    # Con el detector por color de respaldo activo, 3 frames es seguro
+    # (evita parpadeos cuando algo rojo aparece momentáneamente).
+    HYSTERESIS_FRAMES = 3
 
     def __init__(
         self,
