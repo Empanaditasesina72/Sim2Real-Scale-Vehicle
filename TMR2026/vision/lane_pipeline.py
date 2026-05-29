@@ -109,10 +109,11 @@ class LanePipeline:
 
     # ── Sesgo lateral dentro del carril ───────────────────────────────────────
     # 0.0 = pegado a la línea izquierda
-    # 0.5 = centro exacto del carril (comportamiento histórico)
+    # 0.5 = centro exacto del carril
     # 1.0 = pegado a la línea derecha
-    # Para TMR suele interesar 0.60–0.75 (seguir el carril derecho).
-    RIGHT_BIAS = 0.5
+    # TMR circula por el carril DERECHO → 0.70 mantiene el carro a la derecha.
+    # El PID calcula el error contra este objetivo y lo corrige solo.
+    RIGHT_BIAS = 0.70
 
     def __init__(
         self,
