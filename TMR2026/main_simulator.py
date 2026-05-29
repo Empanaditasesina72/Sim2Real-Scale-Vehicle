@@ -122,14 +122,26 @@ class SimulatedCameraWrapper:
     vision/lane_pipeline.py (que espera get_frame() que retorna un array BGR).
     """
 
-    def __init__(self, mock_camera):
+    def __init__(self, mock_camera, out_w=CAMERA_W, out_h=CAMERA_H):
         self.mock_camera = mock_camera
         self._lock = threading.Lock()
+        self._out_w = out_w
+        self._out_h = out_h
 
     def get_frame(self) -> Optional[np.ndarray]:
-        """Retorna el último frame recibido (BGR)."""
+        """
+        Retorna el último frame BGR, SIEMPRE redimensionado a (out_w, out_h).
+        Unity manda 320x240 (RenderTexture) pero el pipeline espera 640x480;
+        sin este resize warpPerspective recibe un frame vacío y crashea.
+        """
         with self._lock:
-            return self.mock_camera.get_latest_frame()
+            frame = self.mock_camera.get_latest_frame()
+        if frame is None or frame.size == 0:
+            return None
+        h, w = frame.shape[:2]
+        if (w, h) != (self._out_w, self._out_h):
+            frame = cv2.resize(frame, (self._out_w, self._out_h))
+        return frame
 
     def start(self):
         """No-op: MockCameraStream ya está corriendo en hilos."""

@@ -91,6 +91,14 @@ class MockSteeringDriver:
         except Exception as e:
             print(f"[MockSteering] Error enviando ángulo: {e}")
 
+    def center(self):
+        """Centra el servo (90°). Lo usa el FSM en deactivate()."""
+        self.set_angle(90.0)
+
+    @property
+    def current_angle_deg(self):
+        return self.current_angle
+
 
 class MockDistanceSensor:
     """Reemplaza: hardware/distance_sensor.py (VL53L0X x2).
