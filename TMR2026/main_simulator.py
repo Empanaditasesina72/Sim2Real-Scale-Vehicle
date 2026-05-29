@@ -28,6 +28,13 @@ import signal
 import threading
 from typing import Optional
 
+# Forzar UTF-8 en la consola (Windows usa cp1252 y crashea con ✓ → etc.)
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 import cv2
 import numpy as np
 

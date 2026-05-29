@@ -18,11 +18,19 @@ Uso:
 import socket
 import threading
 import time
+import sys
 import numpy as np
 import cv2
 import io
 from typing import Optional
 from collections import deque
+
+# Forzar UTF-8 en la consola (Windows cp1252 crashea con ✓ ✗ → etc.)
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 # ============================================================================
 # MOCKS DE HARDWARE
@@ -177,12 +185,7 @@ class SimulatorClient:
           - Texto:   "TOF:front,rear\n"  -> MockDistanceSensor
           - Binario: [4 bytes BE size][JPEG] -> MockCameraStream
         """
-        print("[SimClient] _receive_loop INICIADO")
         buffer = b""
-        bytes_received_total = 0
-        last_log = time.time()
-        tof_parsed = 0
-        jpeg_parsed = 0
         while self._listening:
             try:
                 data = self.socket.recv(65536)
@@ -191,15 +194,7 @@ class SimulatorClient:
                     print("[SimClient] Servidor cerró la conexión.")
                     self._listening = False
                     break
-                bytes_received_total += len(data)
                 buffer += data
-
-                # Log diagnóstico cada segundo
-                if time.time() - last_log > 1.0:
-                    print(f"[SimClient] DIAG bytes_total={bytes_received_total} "
-                          f"buffer_len={len(buffer)} TOF_parsed={tof_parsed} JPEG_parsed={jpeg_parsed} "
-                          f"first_byte={buffer[0:1] if buffer else 'empty'}")
-                    last_log = time.time()
 
                 # Procesar todo lo que se pueda del buffer
                 while True:
@@ -220,7 +215,6 @@ class SimulatorClient:
                                 parts = line[4:].split(",")
                                 if len(parts) >= 2:
                                     self.distance._update(int(parts[0]), int(parts[1]))
-                                    tof_parsed += 1
                             except (ValueError, IndexError):
                                 pass
 
@@ -243,15 +237,14 @@ class SimulatorClient:
                             frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                             if frame is not None:
                                 self.camera._update(frame)
-                                jpeg_parsed += 1
                         except Exception as e:
                             print(f"[SimClient] JPEG decode error: {e}")
 
             except socket.timeout:
-                print(f"[SimClient] recv TIMEOUT (no llegaron datos en {self.socket.gettimeout()}s)")
                 continue
             except OSError as e:
-                print(f"[SimClient] OSError en recv: {e}")
+                if self._listening:
+                    print(f"[SimClient] OSError en recv: {e}")
                 break
             except Exception as e:
                 if self._listening:
