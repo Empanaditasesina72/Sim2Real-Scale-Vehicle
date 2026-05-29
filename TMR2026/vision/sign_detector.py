@@ -239,8 +239,8 @@ class SignDetector:
             self._model(dummy, imgsz=self._imgsz, conf=self._conf, verbose=False)
             print(f"[YOLO] Modelo cargado: {self._model_path}")
         except Exception as e:
-            print(f"[YOLO] ERROR al cargar modelo: {e}")
-            print("[YOLO] El detector de señales estará desactivado.")
+            print(f"[YOLO] Modelo no disponible ({e}).")
+            print("[YOLO] Usando detector de STOP por COLOR (rojo) como respaldo.")
             self._model = None
 
     # ─── Hilo de detección ────────────────────────────────────────────────────
@@ -254,21 +254,24 @@ class SignDetector:
             with self._frame_lock:
                 frame = self._frame
 
-            if frame is None or self._model is None:
+            if frame is None:
                 time.sleep(0.05)
                 continue
 
-            try:
-                results = self._model(
-                    frame,
-                    imgsz=self._imgsz,
-                    conf=self._conf,
-                    verbose=False,
-                )
-                raw_dets = self._parse_results(results, frame.shape)
-            except Exception as e:
-                print(f"[YOLO] Error de inferencia: {e}")
-                raw_dets = []
+            # YOLO solo si el modelo cargó (necesita ultralytics).
+            raw_dets = []
+            if self._model is not None:
+                try:
+                    results = self._model(
+                        frame,
+                        imgsz=self._imgsz,
+                        conf=self._conf,
+                        verbose=False,
+                    )
+                    raw_dets = self._parse_results(results, frame.shape)
+                except Exception as e:
+                    print(f"[YOLO] Error de inferencia: {e}")
+                    raw_dets = []
 
             # ─── Respaldo por color cuando YOLO no detecta STOP ───────────────
             # Si YOLO no encontró 'stop_sign' pero hay una región roja/púrpura

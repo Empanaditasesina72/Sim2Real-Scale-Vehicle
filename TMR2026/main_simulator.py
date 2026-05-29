@@ -38,8 +38,11 @@ except Exception:
 import cv2
 import numpy as np
 
-# ── Flag de display (--display para abrir ventana) ────────────────────────────
+# ── Flags de linea de comandos ────────────────────────────────────────────────
+#   --display  → abre ventana de debug (cámara + carril + señales)
+#   --standby  → arranca quieto (por defecto arranca en AUTONOMOUS y se mueve)
 _DISPLAY = "--display" in sys.argv
+_START_STANDBY = "--standby" in sys.argv
 if _DISPLAY:
     os.environ.setdefault("DISPLAY", ":0")
 
@@ -232,6 +235,15 @@ class VehicleSimulator:
         """Bucle de control principal a 50 Hz."""
         # Arrancar SignDetector (corre en su propio hilo)
         self.sign_det.start()
+
+        # Por defecto arranca en AUTONOMOUS (el carro se mueve solo).
+        # Con --standby se queda quieto esperando set_mode().
+        if not _START_STANDBY:
+            self._mode = self.Mode.AUTONOMOUS
+            self.fsm.activate()
+            print("[MAIN] Modo AUTONOMOUS activado (el carro va a manejar solo).")
+            if _DISPLAY:
+                print("[MAIN] Teclas en la ventana:  A=Autonomo  S=Stop  Q=Salir")
 
         print(f"[MAIN] Bucle de control a {LOOP_HZ} Hz iniciado.")
         dt = 1.0 / LOOP_HZ
@@ -434,7 +446,17 @@ class VehicleSimulator:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2, cv2.LINE_AA)
 
         cv2.imshow("TMR 2026 - Simulator Debug", vis)
-        cv2.waitKey(1)
+        # Teclas en la ventana: A=Autonomo  S=Stop  Q=Salir
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            self._running = False
+        elif key == ord('a'):
+            if self._mode != self.Mode.AUTONOMOUS:
+                self._mode = self.Mode.AUTONOMOUS
+                self.fsm.activate()
+        elif key == ord('s'):
+            self._mode = self.Mode.STANDBY
+            self.fsm.deactivate()
 
     @staticmethod
     def _draw_panel(img, x: int, y: int, w: int, h: int, lines: list[str]) -> None:
