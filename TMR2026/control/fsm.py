@@ -211,22 +211,25 @@ class AutonomousFSM:
         self.motor.set_speed(self.MAX_AUTO_PWM)
 
     def _do_precaucion(self) -> None:
-        # Señal desapareció antes del Lidar → volver a CRUCERO
+        # Señal desapareció antes de frenar → volver a CRUCERO
         if not self.sign_visible:
             self._transition(FSMState.CRUCERO)
             return
 
-        # Lidar confirma distancia ≤ 30 cm → FRENADO
-        if self.lidar_mm is not None and self.lidar_mm <= self.LIDAR_STOP_MM:
-            self._transition(FSMState.FRENADO)
-            return
+        # Frenar si CUALQUIERA confirma cercanía:
+        #   • Lidar frontal ≤ 30 cm (si está cableado), O
+        #   • Distancia estimada por la cámara (bbox) ≤ umbral.
+        # En el simulador el lidar apunta al centro y la señal va al lado,
+        # así que el lidar nunca baja: la cámara (bbox) es la que frena.
+        # En el Pi real (swithout ToF frontal) pasa lo mismo → mismo camino.
+        lidar_close = (self.lidar_mm is not None
+                       and self.lidar_mm <= self.LIDAR_STOP_MM)
+        bbox_close  = (self.sign_distance_mm is not None
+                       and self.sign_distance_mm <= self.SIGN_BBOX_STOP_MM)
 
-        # Fallback por bbox: si NO hay lidar pero la estimación por cámara
-        # ya confirma que estamos cerca → FRENADO
-        if (self.lidar_mm is None
-            and self.sign_distance_mm is not None
-            and self.sign_distance_mm <= self.SIGN_BBOX_STOP_MM):
-            print(f"[FSM] Frenando por bbox ({self.sign_distance_mm:.0f} mm sin lidar)")
+        if lidar_close or bbox_close:
+            origen = "lidar" if lidar_close else f"camara {self.sign_distance_mm:.0f}mm"
+            print(f"[FSM] Frenando ({origen})")
             self._transition(FSMState.FRENADO)
             return
 
