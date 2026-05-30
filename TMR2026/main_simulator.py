@@ -448,22 +448,6 @@ class VehicleSimulator:
         if frame is None:
             return
 
-        # === VENTANA DIAGNOSTICO: frame CRUDO tal cual llega de Unity ===
-        # Sin BEV ni overlays. Muestra exactamente lo que ve la cámara del
-        # carro + estadísticas de brillo para saber qué está capturando.
-        raw = frame.copy()
-        h, w = raw.shape[:2]
-        mean_bgr = raw.mean(axis=(0, 1))
-        bright = float(raw.max())
-        white_px = int((raw.min(axis=2) > 180).sum())   # px casi blancos
-        cv2.putText(raw, f"CAM {w}x{h}", (8, 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        cv2.putText(raw, f"BGR medio: {mean_bgr[0]:.0f},{mean_bgr[1]:.0f},{mean_bgr[2]:.0f}",
-                    (8, h - 40), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
-        cv2.putText(raw, f"px blancos: {white_px}   max: {bright:.0f}",
-                    (8, h - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
-        cv2.imshow("CAMARA CRUDA (lo que ve el carro)", raw)
-
         lane  = self._last_lane
         dets  = self.sign_det.get_detections()
         lidar = self.sensor.front_mm
