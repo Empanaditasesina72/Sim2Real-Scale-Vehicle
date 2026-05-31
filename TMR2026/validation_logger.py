@@ -152,11 +152,14 @@ class ValidationLogger:
             dist_final = parado[-1]["distance_mm"]
             err_dist = abs(dist_final - self.STOP_TARGET_MM)
             dentro = err_dist <= self.STOP_TOLERANCE_MM
-            # ¿sobreimpulso? (¿la distancia bajó de la ventana y volvió a subir?)
+            # ¿sobreimpulso REAL? Solo si el carro se pasó CLARAMENTE del STOP
+            # (distancia bien por debajo del objetivo). Se usa un umbral amplio
+            # (2.5×tolerancia) para no confundir el ruido del bbox de la cámara
+            # (~±50 mm) con un sobreimpulso de control real.
             dists = [r["distance_mm"] for r in self.stop_rows
                      if isinstance(r["distance_mm"], (int, float))]
             min_d = min(dists) if dists else dist_final
-            sobreimpulso = min_d < (self.STOP_TARGET_MM - self.STOP_TOLERANCE_MM)
+            sobreimpulso = min_d < (self.STOP_TARGET_MM - 2.5 * self.STOP_TOLERANCE_MM)
             if dentro and not sobreimpulso:
                 p2["puntos"] = 40
             elif dentro:
