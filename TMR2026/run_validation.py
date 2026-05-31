@@ -48,7 +48,9 @@ def main():
         print("    2) Verifica el texto 'Listening on port 5005' en la consola.")
         print("    3) Vuelve a correr:  python run_validation.py")
         sys.exit(1)
-    print("[OK] Unity detectado en el puerto 5005.\n")
+    print("[OK] Unity detectado en el puerto 5005.")
+    print("[!] IMPORTANTE: cierra cualquier OTRA terminal de Python conectada")
+    print("    (ej. main_simulator.py --display). Unity solo atiende 1 cliente.\n")
 
     here = os.path.dirname(os.path.abspath(__file__))
 

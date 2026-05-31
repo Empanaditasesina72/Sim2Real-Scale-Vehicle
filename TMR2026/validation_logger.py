@@ -121,7 +121,9 @@ class ValidationLogger:
         res = {"pruebas": [], "total": 0, "max": 0}
 
         # ── Prueba 1: Latencia ──
-        lat = [r["latency_ms"] for r in self.latency_rows if r["latency_ms"] > 0]
+        # Filtrar outliers (> 500 ms = timeouts de socket, no ciclos reales).
+        lat = [r["latency_ms"] for r in self.latency_rows
+               if 0 < r["latency_ms"] < 500]
         p1 = {"nombre": "P1 Latencia ciclo de control", "puntos": 0, "max": 30,
               "detalle": ""}
         if lat:

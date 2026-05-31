@@ -276,6 +276,24 @@ class VehicleSimulator:
             if _DISPLAY:
                 print("[MAIN] Teclas en la ventana:  A=Autonomo  S=Stop  Q=Salir")
 
+        # Esperar el PRIMER frame de Unity antes de arrancar el bucle, para no
+        # correr "en vacío" (y no contaminar la latencia con el timeout).
+        print("[MAIN] Esperando frames de Unity...")
+        t_wait = time.monotonic()
+        while (self.camera.get_frame() is None
+               and self.sensor.front_mm is None
+               and (time.monotonic() - t_wait) < 10.0):
+            time.sleep(0.1)
+        if self.camera.get_frame() is None and self.sensor.front_mm is None:
+            print("=" * 60)
+            print("[ERROR] Unity conectó pero NO envía frames/sensores.")
+            print("  Causa típica: hay OTRA instancia de Python conectada.")
+            print("  Solución: cierra TODAS las terminales de Python, en Unity")
+            print("  dale STOP y luego PLAY, y vuelve a correr SOLO este script.")
+            print("=" * 60)
+        else:
+            print("[MAIN] Frames recibidos. Arrancando control.")
+
         print(f"[MAIN] Bucle de control a {LOOP_HZ} Hz iniciado.")
         if _DURATION > 0:
             print(f"[MAIN] Duración fija: {_DURATION:.0f} s (luego guarda y sale).")
