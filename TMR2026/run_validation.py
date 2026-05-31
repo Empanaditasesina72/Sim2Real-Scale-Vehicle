@@ -33,9 +33,10 @@ def unity_listening(host="127.0.0.1", port=PORT, timeout=1.5) -> bool:
 
 
 def main():
-    dur = DURATION
-    if len(sys.argv) > 1:
-        try: dur = int(sys.argv[1])
+    parking = "parking" in sys.argv
+    dur = 25 if parking else DURATION
+    for a in sys.argv[1:]:
+        try: dur = int(a)
         except ValueError: pass
 
     print("=" * 60)
@@ -55,11 +56,16 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
 
     # 1) Correr el control con logging de validación
-    print(f">>> Ejecutando las 3 pruebas durante {dur} s...")
-    print("    (el carro maneja, detecta el STOP, frena y reanuda)\n")
-    subprocess.run([sys.executable, os.path.join(here, "main_simulator.py"),
-                    "--validate", "--duration", str(dur)],
-                   cwd=here)
+    cmd = [sys.executable, os.path.join(here, "main_simulator.py"),
+           "--validate", "--duration", str(dur)]
+    if parking:
+        cmd.append("--parking")
+        print(f">>> Ejecutando con ESTACIONAMIENTO durante {dur} s...")
+        print("    (maneja, luego PARKING_SEARCH→PARKING_MANEUVER→PARKED)\n")
+    else:
+        print(f">>> Ejecutando las 3 pruebas durante {dur} s...")
+        print("    (el carro maneja, detecta el STOP, frena y reanuda)\n")
+    subprocess.run(cmd, cwd=here)
 
     # 2) Generar gráficas del artículo
     print("\n>>> Generando gráficas del artículo...")

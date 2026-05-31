@@ -33,10 +33,11 @@ class ValidationLogger:
     LATENCY_BONUS_MS    = 100.0   # bonus si < 100 ms
     STOP_TARGET_MM      = 270.0   # parada objetivo
     STOP_TOLERANCE_MM   = 30.0    # 270 ± 30 → ventana 240-300 mm
-    # Estados que la FSM debe recorrer (Prueba 3). PARKING_* son opcionales:
-    # si el módulo de estacionamiento está activo se cuentan, si no, basta el
-    # ciclo del STOP (CRUCERO→PRECAUCION→FRENADO→ESPERA→REANUDAR).
-    FSM_ESPERADOS_STOP  = ["CRUCERO", "PRECAUCION", "FRENADO", "ESPERA", "REANUDAR"]
+    # Estados que la FSM debe recorrer (Prueba 3). Hay dos ciclos válidos:
+    #   - Ciclo STOP:    CRUCERO→PRECAUCION→FRENADO→ESPERA→REANUDAR
+    #   - Ciclo PARKING: PARKING_SEARCH→PARKING_MANEUVER→PARKED (PDF Prueba 3)
+    FSM_ESPERADOS_STOP    = ["CRUCERO", "PRECAUCION", "FRENADO", "ESPERA", "REANUDAR"]
+    FSM_ESPERADOS_PARKING = ["PARKING_SEARCH", "PARKING_MANEUVER", "PARKED"]
 
     def __init__(self, outdir: str = "validation_results"):
         os.makedirs(outdir, exist_ok=True)
@@ -181,16 +182,21 @@ class ValidationLogger:
               "detalle": ""}
         visitados = [r["to_state"] for r in self.fsm_rows]
         ciclo_stop = [s for s in self.FSM_ESPERADOS_STOP if s in visitados]
-        n = len(ciclo_stop)
-        if n >= 5:
+        ciclo_park = [s for s in self.FSM_ESPERADOS_PARKING if s in visitados]
+        n_stop = len(ciclo_stop)
+        n_park = len(ciclo_park)
+        # 30 pts si completa el ciclo STOP (5) O el ciclo PARKING (3)
+        if n_stop >= 5 or n_park >= 3:
             p3["puntos"] = 30
-        elif n >= 3:
+        elif n_stop >= 3 or n_park >= 2:
             p3["puntos"] = 20
-        elif n >= 1:
+        elif n_stop >= 1 or n_park >= 1:
             p3["puntos"] = 10
-        p3["detalle"] = (f"{n}/5 estados del ciclo STOP visitados: "
-                         f"{', '.join(ciclo_stop) or '—'}; "
-                         f"{len(self.fsm_rows)} transiciones totales")
+        det = f"STOP {n_stop}/5: {', '.join(ciclo_stop) or '—'}"
+        if n_park > 0:
+            det += f"  |  PARKING {n_park}/3: {', '.join(ciclo_park)}"
+        det += f"  ({len(self.fsm_rows)} transiciones)"
+        p3["detalle"] = det
         res["pruebas"].append(p3)
 
         res["total"] = sum(p["puntos"] for p in res["pruebas"])

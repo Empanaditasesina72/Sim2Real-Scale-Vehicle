@@ -48,6 +48,11 @@ Se ejecutan las **3 pruebas** del PDF y se generan archivos **.csv** + gráficas
 | **P2 Frenado PID** ante STOP (700→270 mm, sin sobreimpulso) | distancia ToF vs PWM vs tiempo | `validation_results/P2_pid_stop.csv` |
 | **P3 Transiciones FSM** (sin bloqueo, transiciones limpias) | log temporal de cada cambio de estado + dwell | `validation_results/P3_fsm.csv` |
 
+> **Estacionamiento en batería (Prueba 3 completa):** además del ciclo del
+> STOP, se implementó la maniobra de estacionamiento con sus estados
+> `PARKING_SEARCH → PARKING_MANEUVER → PARKED` (`control/parking_fsm.py`).
+> Se ejecuta con `python run_validation.py parking`.
+
 ---
 
 ## 3. Cómo ejecutar TODO (paso a paso)
@@ -62,13 +67,13 @@ pip install -r requirements.txt        # opencv, numpy, matplotlib, ultralytics
    - Verifica en la consola: `[Server] Listening on port 5005...`
 2. **En la PC**, una terminal en `Carrito/TMR2026/`:
    ```bash
-   python run_validation.py            # corre las 3 pruebas (60 s)
+   python run_validation.py            # P1 latencia + P2 STOP + P3 ciclo FSM
+   python run_validation.py parking    # P3 estacionamiento en batería
    ```
-   Esto hace TODO automáticamente:
-   - Ejecuta el control real contra la simulación
-   - Genera los 3 CSV
-   - Calcula el tablero de puntos (`PUNTAJE.txt`)
-   - Genera las 3 gráficas del artículo (PNG)
+   Cada comando: ejecuta el control real contra la simulación, genera los
+   CSV, el tablero de puntos (`PUNTAJE.txt`) y las gráficas (PNG).
+   > Corre PRIMERO el normal (100/100) y LUEGO el de parking para demostrar
+   > la maniobra de estacionamiento. Entre corridas, deja Unity en PLAY.
 
 ### Ver solo en vivo (sin guardar datos)
 ```bash

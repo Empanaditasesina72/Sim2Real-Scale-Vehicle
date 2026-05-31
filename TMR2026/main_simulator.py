@@ -45,6 +45,10 @@ import numpy as np
 _DISPLAY = "--display" in sys.argv
 _START_STANDBY = "--standby" in sys.argv
 _VALIDATE = "--validate" in sys.argv
+#   --parking → fuerza el escenario de estacionamiento (Prueba 3 del PDF):
+#   maneja un rato y luego ejecuta PARKING_SEARCH→PARKING_MANEUVER→PARKED.
+_PARKING = "--parking" in sys.argv
+_PARK_TRIGGER_S = 5.0   # segundos manejando antes de iniciar el estacionamiento
 if _DISPLAY:
     os.environ.setdefault("DISPLAY", ":0")
 
@@ -83,6 +87,7 @@ from vision.lane_pipeline import LanePipeline, LaneResult
 from vision.sign_detector import SignDetector
 from control.pid_controller import PIDController
 from control.fsm import AutonomousFSM, FSMState
+from control.parking_fsm import ParkingFSM, ParkingState
 from validation_logger import ValidationLogger
 
 # Placeholder para mocks de GPIO (no-op en PC)
@@ -177,6 +182,7 @@ class VehicleSimulator:
         MANUAL     = "MANUAL"
         VISION     = "VISION"
         AUTONOMOUS = "AUTONOMOUS"
+        PARKING    = "PARKING"     # estacionamiento en batería (Prueba 3)
 
     MODE_COOLDOWN_S = 0.4
 
@@ -233,6 +239,8 @@ class VehicleSimulator:
             signals     = self.signals,
             brake_light = self.brake_light,
         )
+        # FSM de estacionamiento en batería (Prueba 3 del PDF)
+        self.parking = ParkingFSM(self.motor, self.steering)
 
         # ── Estado interno ────────────────────────────────────────────────
         self._mode            = self.Mode.STANDBY
@@ -312,6 +320,14 @@ class VehicleSimulator:
                     self._running = False
                     break
 
+                # Trigger del estacionamiento (Prueba 3): tras manejar un rato
+                # en AUTONOMOUS, forzar el escenario de parking en batería.
+                if (_PARKING and self._mode == self.Mode.AUTONOMOUS
+                        and (now - t_run0) >= _PARK_TRIGGER_S):
+                    self.fsm.deactivate()
+                    self._mode = self.Mode.PARKING
+                    self.parking.activate()
+
                 # Latencia percepción→actuación: tiempo del ciclo visión+control
                 cycle_t0 = time.monotonic()
                 self._update_vision()
@@ -331,11 +347,15 @@ class VehicleSimulator:
                     dist_stop = (self.fsm.sign_distance_mm
                                  if self.fsm.sign_distance_mm is not None
                                  else self.sensor.front_mm)
+                    # Estado actual: FSM de conducción o FSM de estacionamiento
+                    estado = (self.parking.state.name
+                              if self._mode == self.Mode.PARKING
+                              else self.fsm.state.name)
                     self.vlog.log_stop(dist_stop,
                                        self.motor.current_duty,
                                        self._last_lane.error_px,
-                                       self.fsm.state.name)
-                    self.vlog.log_fsm(self.fsm.state.name)
+                                       estado)
+                    self.vlog.log_fsm(estado)
 
                 elapsed = time.monotonic() - now
                 sleep   = max(0.0, (1.0 / LOOP_HZ) - elapsed)
@@ -429,6 +449,16 @@ class VehicleSimulator:
                 self._log_autonomous()
                 if _DISPLAY:
                     self._render_debug_view(mode_label="AUT")
+            case self.Mode.PARKING:
+                # Estacionamiento en batería (Prueba 3 del PDF)
+                self.parking.lidar_mm = self.sensor.front_mm
+                self.parking.update(dt)
+                print(f"\r[PARK] {self.parking.state.name:<16} "
+                      f"duty:{self.motor.current_duty:+.0f}%  "
+                      f"angle:{self.steering.current_angle:5.1f}°   ",
+                      end="", flush=True)
+                if _DISPLAY:
+                    self._render_debug_view(mode_label="PARK")
 
     def _log_autonomous(self) -> None:
         """Status line para modo autónomo."""
