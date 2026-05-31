@@ -41,10 +41,19 @@ import numpy as np
 # ── Flags de linea de comandos ────────────────────────────────────────────────
 #   --display  → abre ventana de debug (cámara + carril + señales)
 #   --standby  → arranca quieto (por defecto arranca en AUTONOMOUS y se mueve)
+#   --validate → registra las 3 pruebas del PDF en CSV + tablero de puntos
 _DISPLAY = "--display" in sys.argv
 _START_STANDBY = "--standby" in sys.argv
+_VALIDATE = "--validate" in sys.argv
 if _DISPLAY:
     os.environ.setdefault("DISPLAY", ":0")
+
+# --duration N → corre N segundos y termina limpio (guarda CSV/puntos).
+_DURATION = 0.0
+for _i, _a in enumerate(sys.argv):
+    if _a == "--duration" and _i + 1 < len(sys.argv):
+        try: _DURATION = float(sys.argv[_i + 1])
+        except ValueError: _DURATION = 0.0
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTES COMPORTAMIENTO
@@ -74,6 +83,7 @@ from vision.lane_pipeline import LanePipeline, LaneResult
 from vision.sign_detector import SignDetector
 from control.pid_controller import PIDController
 from control.fsm import AutonomousFSM, FSMState
+from validation_logger import ValidationLogger
 
 # Placeholder para mocks de GPIO (no-op en PC)
 class NoOpSignals:
@@ -231,6 +241,9 @@ class VehicleSimulator:
         self._start_time      = time.monotonic()
         self._sign_action     = ""   # texto de acción de la señal detectada
 
+        # Logger de validación (PDF): CSV de las 3 pruebas + puntos
+        self.vlog = ValidationLogger() if _VALIDATE else None
+
         # ── Metrics para Phase 1 validation ────────────────────────────────
         self._metrics = {
             "frame_count": 0,
@@ -264,8 +277,11 @@ class VehicleSimulator:
                 print("[MAIN] Teclas en la ventana:  A=Autonomo  S=Stop  Q=Salir")
 
         print(f"[MAIN] Bucle de control a {LOOP_HZ} Hz iniciado.")
+        if _DURATION > 0:
+            print(f"[MAIN] Duración fija: {_DURATION:.0f} s (luego guarda y sale).")
         dt = 1.0 / LOOP_HZ
         t_last = time.monotonic()
+        t_run0 = time.monotonic()
 
         try:
             while self._running:
@@ -273,11 +289,30 @@ class VehicleSimulator:
                 dt    = now - t_last
                 t_last = now
 
+                # Límite de tiempo (pruebas del PDF con duración fija)
+                if _DURATION > 0 and (now - t_run0) >= _DURATION:
+                    self._running = False
+                    break
+
+                # Latencia percepción→actuación: tiempo del ciclo visión+control
+                cycle_t0 = time.monotonic()
                 self._update_vision()
                 self._run_mode(dt)
+                latency_ms = (time.monotonic() - cycle_t0) * 1000.0
 
                 # Avanzar blink (si los LEDs estuvieran conectados)
                 self.signals.tick()
+
+                # ── Logging de validación (PDF) ──
+                if self.vlog is not None:
+                    self.vlog.log_cycle(latency_ms,
+                                        self._last_lane.error_px,
+                                        self._last_lane.confidence)
+                    self.vlog.log_stop(self.sensor.front_mm,
+                                       self.motor.current_duty,
+                                       self._last_lane.error_px,
+                                       self.fsm.state.name)
+                    self.vlog.log_fsm(self.fsm.state.name)
 
                 elapsed = time.monotonic() - now
                 sleep   = max(0.0, (1.0 / LOOP_HZ) - elapsed)
@@ -596,6 +631,14 @@ class VehicleSimulator:
         print(f"\n[METRICS] Loop ejecutado {metrics['loop_count']} veces en {metrics['elapsed_s']:.1f}s")
         print(f"[METRICS] Frames procesados: {metrics['frame_count']}")
         print(f"[METRICS] Lecturas lidar: {len(metrics['lidar_readings'])}")
+
+        # ── Validación del PDF: exportar los 3 CSV + tablero de puntos ──
+        if self.vlog is not None:
+            paths = self.vlog.save_all()
+            print("\n[VALIDACION] CSV generados:")
+            for k, v in paths.items():
+                print(f"   - {v}")
+            self.vlog.print_scoreboard()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
