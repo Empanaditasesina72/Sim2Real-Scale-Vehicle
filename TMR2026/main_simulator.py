@@ -326,7 +326,12 @@ class VehicleSimulator:
                     self.vlog.log_cycle(latency_ms,
                                         self._last_lane.error_px,
                                         self._last_lane.confidence)
-                    self.vlog.log_stop(self.sensor.front_mm,
+                    # Distancia al STOP: usar la de la CÁMARA (bbox) si la hay,
+                    # porque el ToF frontal no está cableado (da 2000 mm fijo).
+                    dist_stop = (self.fsm.sign_distance_mm
+                                 if self.fsm.sign_distance_mm is not None
+                                 else self.sensor.front_mm)
+                    self.vlog.log_stop(dist_stop,
                                        self.motor.current_duty,
                                        self._last_lane.error_px,
                                        self.fsm.state.name)
