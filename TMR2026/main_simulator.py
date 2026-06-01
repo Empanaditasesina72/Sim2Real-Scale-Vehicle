@@ -260,7 +260,8 @@ class VehicleSimulator:
         self.vlog = ValidationLogger("validation_results") if _VALIDATE else None
 
         # Estado de la secuencia STOP→parking
-        self._stop_seen   = False   # el carro llegó a ESPERA (paró en el STOP)
+        self._stop_seen   = False   # entró a la secuencia del STOP (PRECAUCION+)
+        self._espera_done = False   # el carro REALMENTE paró (llegó a ESPERA)
         self._stop_done_t = 0.0     # cuándo terminó el STOP (volvió a CRUCERO)
 
         # ── Metrics para Phase 1 validation ────────────────────────────────
@@ -301,7 +302,7 @@ class VehicleSimulator:
         t_wait = time.monotonic()
         while (self.camera.get_frame() is None
                and self.sensor.front_mm is None
-               and (time.monotonic() - t_wait) < 10.0):
+               and (time.monotonic() - t_wait) < 20.0):
             time.sleep(0.1)
         if self.camera.get_frame() is None and self.sensor.front_mm is None:
             print("=" * 60)
@@ -333,22 +334,28 @@ class VehicleSimulator:
 
                 # Secuencia STOP → estacionamiento (todo en una corrida).
                 if _PARKING and self._mode == self.Mode.AUTONOMOUS:
-                    # 1) marcar cuando el carro PARÓ en el STOP (estado ESPERA)
-                    if self.fsm.state == FSMState.ESPERA:
+                    est = self.fsm.state
+                    # 1) El carro ENTRÓ a la secuencia del STOP (PRECAUCION en
+                    #    adelante) → bloquea YA el respaldo para que nunca corte
+                    #    el frenado a la mitad, sin importar cuánto tardó en llegar.
+                    if est in (FSMState.PRECAUCION, FSMState.FRENADO, FSMState.ESPERA):
                         self._stop_seen = True
-                    # 2) marcar cuando TERMINÓ el STOP (volvió a CRUCERO)
-                    if (self._stop_seen and self._stop_done_t == 0.0
-                            and self.fsm.state == FSMState.CRUCERO):
+                    # 2) El carro REALMENTE paró (llegó a ESPERA los 5 s).
+                    if est == FSMState.ESPERA:
+                        self._espera_done = True
+                    # 3) Terminó el ciclo del STOP (paró y reanudó a CRUCERO).
+                    if (self._espera_done and self._stop_done_t == 0.0
+                            and est == FSMState.CRUCERO):
                         self._stop_done_t = now
-                    # 3) activar parking: tras completar el STOP + avanzar un
-                    #    poco, o por respaldo si nunca vio el STOP.
+                    # 4) Activar parking UNOS SEGUNDOS tras reanudar del STOP.
                     listo_tras_stop = (self._stop_done_t > 0.0
                                        and (now - self._stop_done_t) >= _PARK_AFTER_STOP_S)
-                    # El respaldo SOLO aplica si el carro NUNCA vio el STOP; así
-                    # nunca corta el ciclo ESPERA→REANUDAR→CRUCERO a la mitad
-                    # (antes el respaldo de 22 s saltaba durante la espera).
+                    # Respaldo = última red de seguridad: SOLO si el STOP nunca
+                    # se detectó Y ya casi acaba la corrida. Así jamás interrumpe
+                    # un STOP en progreso ni uno que está por venir.
                     respaldo = (not self._stop_seen
-                                and (now - t_run0) >= _PARK_FALLBACK_S)
+                                and _DURATION > 0
+                                and (now - t_run0) >= (_DURATION - 14.0))
                     if listo_tras_stop or respaldo:
                         self.fsm.deactivate()
                         self._mode = self.Mode.PARKING
