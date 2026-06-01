@@ -344,7 +344,11 @@ class VehicleSimulator:
                     #    poco, o por respaldo si nunca vio el STOP.
                     listo_tras_stop = (self._stop_done_t > 0.0
                                        and (now - self._stop_done_t) >= _PARK_AFTER_STOP_S)
-                    respaldo = (now - t_run0) >= _PARK_FALLBACK_S
+                    # El respaldo SOLO aplica si el carro NUNCA vio el STOP; así
+                    # nunca corta el ciclo ESPERA→REANUDAR→CRUCERO a la mitad
+                    # (antes el respaldo de 22 s saltaba durante la espera).
+                    respaldo = (not self._stop_seen
+                                and (now - t_run0) >= _PARK_FALLBACK_S)
                     if listo_tras_stop or respaldo:
                         self.fsm.deactivate()
                         self._mode = self.Mode.PARKING

@@ -36,7 +36,7 @@ def main():
     # Una sola corrida hace TODO en secuencia: maneja → STOP → espera →
     # reanuda → sigue → estaciona en batería. Duración amplia para que dé
     # tiempo a completar el estacionamiento.
-    dur = 40
+    dur = 50
     for a in sys.argv[1:]:
         try: dur = int(a)
         except ValueError: pass
