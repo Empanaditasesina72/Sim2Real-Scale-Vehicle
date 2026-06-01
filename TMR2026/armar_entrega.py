@@ -59,7 +59,7 @@ def main():
     print(">>> Copiando documentos...")
     docs = os.path.join(DEST, "03_documentos")
     os.makedirs(docs, exist_ok=True)
-    for d in ("ENTREGA_PROFESOR.md", "CALIBRACION_SIM.md"):
+    for d in ("ENTREGA_PROFESOR.md", "DELIVERY_PROFESSOR.md", "CALIBRACION_SIM.md"):
         p = os.path.join(HERE, d)
         if os.path.exists(p):
             shutil.copy2(p, os.path.join(docs, d))
@@ -86,6 +86,29 @@ def main():
             "'TMR2026_Sim' (Unity).\n"
         )
     print("   ✓ LEEME.txt")
+
+    # README en inglés (entrega internacional / artículo)
+    with open(os.path.join(DEST, "README.txt"), "w", encoding="utf-8") as f:
+        f.write(
+            "DELIVERY — Sim2Real Validation of the Autonomous Vehicle (TMR 2026)\n"
+            "==================================================================\n\n"
+            "Everything was obtained in a SINGLE run (python run_validation.py):\n"
+            "drive -> detect STOP -> brake -> wait 5s -> resume -> drive forward\n"
+            "-> park in battery.\n\n"
+            "01_resultados_3_pruebas/  -> The 3 PDF tests:\n"
+            "   - P1 control-loop latency\n"
+            "   - P2 PID braking at STOP (stops at ~290 mm)\n"
+            "   - P3 FSM transitions: STOP cycle (CRUCERO, PRECAUCION, FRENADO,\n"
+            "     ESPERA, REANUDAR) + parking (PARKING_SEARCH, PARKING_MANEUVER,\n"
+            "     PARKED).\n"
+            "   Contains the 3 CSV + 6 figures (ES + _en PNG) + SCOREBOARD.txt\n"
+            "   (English) and PUNTAJE.txt (Spanish), both 100/100.\n\n"
+            "03_documentos/            -> DELIVERY_PROFESSOR.md (English map of\n"
+            "   every PDF requirement), ENTREGA_PROFESOR.md (Spanish) and\n"
+            "   CALIBRACION_SIM.md.\n\n"
+            "Source code: GitHub repos 'Carrito' (Python) and 'TMR2026_Sim' (Unity).\n"
+        )
+    print("   ✓ README.txt (English)")
 
     print(">>> Comprimiendo ZIP...")
     if os.path.exists(ZIP + ".zip"):

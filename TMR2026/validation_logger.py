@@ -125,8 +125,9 @@ class ValidationLogger:
         # Filtrar outliers (> 500 ms = timeouts de socket, no ciclos reales).
         lat = [r["latency_ms"] for r in self.latency_rows
                if 0 < r["latency_ms"] < 500]
-        p1 = {"nombre": "P1 Latencia ciclo de control", "puntos": 0, "max": 30,
-              "detalle": ""}
+        p1 = {"nombre": "P1 Latencia ciclo de control",
+              "nombre_en": "P1 Control-loop latency",
+              "puntos": 0, "max": 30, "detalle": "", "detalle_en": ""}
         if lat:
             avg = sum(lat) / len(lat)
             mx = max(lat)
@@ -138,13 +139,17 @@ class ValidationLogger:
                 p1["puntos"] = 5
             p1["detalle"] = (f"latencia media {avg:.1f} ms, máx {mx:.1f} ms "
                              f"(objetivo < {self.LATENCY_MAX_MS:.0f} ms)")
+            p1["detalle_en"] = (f"mean latency {avg:.1f} ms, max {mx:.1f} ms "
+                                f"(target < {self.LATENCY_MAX_MS:.0f} ms)")
         else:
             p1["detalle"] = "sin datos de latencia"
+            p1["detalle_en"] = "no latency data"
         res["pruebas"].append(p1)
 
         # ── Prueba 2: Frenado STOP a 270±30 mm ──
-        p2 = {"nombre": "P2 Frenado PID ante STOP", "puntos": 0, "max": 40,
-              "detalle": ""}
+        p2 = {"nombre": "P2 Frenado PID ante STOP",
+              "nombre_en": "P2 PID braking at STOP",
+              "puntos": 0, "max": 40, "detalle": "", "detalle_en": ""}
         # distancia donde el carro quedó detenido (pwm≈0 en estado FRENADO/ESPERA)
         parado = [r for r in self.stop_rows
                   if r["fsm_state"] in ("FRENADO", "ESPERA")
@@ -180,13 +185,18 @@ class ValidationLogger:
             p2["detalle"] = (f"se detuvo a {dist_final:.0f} mm "
                              f"(objetivo {self.STOP_TARGET_MM:.0f}±{self.STOP_TOLERANCE_MM:.0f}), "
                              f"{'sin' if not sobreimpulso else 'con'} sobreimpulso")
+            p2["detalle_en"] = (f"stopped at {dist_final:.0f} mm "
+                                f"(target {self.STOP_TARGET_MM:.0f}±{self.STOP_TOLERANCE_MM:.0f}), "
+                                f"{'no' if not sobreimpulso else 'with'} overshoot")
         else:
             p2["detalle"] = "el carro no llegó a FRENADO/ESPERA (no detectó STOP)"
+            p2["detalle_en"] = "the car did not reach FRENADO/ESPERA (STOP not detected)"
         res["pruebas"].append(p2)
 
         # ── Prueba 3: Transiciones FSM sin bloqueo ──
-        p3 = {"nombre": "P3 Transiciones FSM", "puntos": 0, "max": 30,
-              "detalle": ""}
+        p3 = {"nombre": "P3 Transiciones FSM",
+              "nombre_en": "P3 FSM transitions",
+              "puntos": 0, "max": 30, "detalle": "", "detalle_en": ""}
         visitados = [r["to_state"] for r in self.fsm_rows]
         ciclo_stop = [s for s in self.FSM_ESPERADOS_STOP if s in visitados]
         ciclo_park = [s for s in self.FSM_ESPERADOS_PARKING if s in visitados]
@@ -200,37 +210,56 @@ class ValidationLogger:
         elif n_stop >= 1 or n_park >= 1:
             p3["puntos"] = 10
         det = f"STOP {n_stop}/5: {', '.join(ciclo_stop) or '—'}"
+        det_en = f"STOP {n_stop}/5: {', '.join(ciclo_stop) or '—'}"
         if n_park > 0:
             det += f"  |  PARKING {n_park}/3: {', '.join(ciclo_park)}"
+            det_en += f"  |  PARKING {n_park}/3: {', '.join(ciclo_park)}"
         det += f"  ({len(self.fsm_rows)} transiciones)"
+        det_en += f"  ({len(self.fsm_rows)} transitions)"
         p3["detalle"] = det
+        p3["detalle_en"] = det_en
         res["pruebas"].append(p3)
 
         res["total"] = sum(p["puntos"] for p in res["pruebas"])
         res["max"]   = sum(p["max"] for p in res["pruebas"])
         return res
 
-    def print_scoreboard(self) -> dict:
-        """Imprime el tablero de puntos y guarda PUNTAJE.txt."""
-        res = self.evaluate()
-        lines = []
-        lines.append("=" * 60)
-        lines.append("  TABLERO DE PUNTOS — Validación Sim2Real TMR 2026")
-        lines.append("=" * 60)
+    def _board_text(self, res: dict, lang: str = "es") -> str:
+        """Renderiza el tablero en español ('es') o inglés ('en')."""
+        en = (lang == "en")
+        title = ("SCOREBOARD — Sim2Real Validation TMR 2026" if en
+                 else "TABLERO DE PUNTOS — Validación Sim2Real TMR 2026")
+        lines = ["=" * 60, "  " + title, "=" * 60]
         for p in res["pruebas"]:
             barra = "█" * int(20 * p["puntos"] / p["max"]) if p["max"] else ""
-            lines.append(f"  {p['nombre']:<32} {p['puntos']:>3}/{p['max']:<3} {barra}")
-            lines.append(f"     → {p['detalle']}")
+            nombre  = p.get("nombre_en"  if en else "nombre",  p["nombre"])
+            detalle = p.get("detalle_en" if en else "detalle", p["detalle"])
+            lines.append(f"  {nombre:<32} {p['puntos']:>3}/{p['max']:<3} {barra}")
+            lines.append(f"     → {detalle}")
         lines.append("-" * 60)
         pct = 100 * res["total"] / res["max"] if res["max"] else 0
         lines.append(f"  TOTAL: {res['total']}/{res['max']}  ({pct:.0f}%)")
-        veredicto = ("APROBADO ✓" if pct >= 70 else
-                     "PARCIAL ⚠" if pct >= 40 else "REVISAR ✗")
-        lines.append(f"  VEREDICTO: {veredicto}")
+        if en:
+            veredicto = ("PASSED ✓" if pct >= 70 else
+                         "PARTIAL ⚠" if pct >= 40 else "REVIEW ✗")
+            lines.append(f"  VERDICT: {veredicto}")
+        else:
+            veredicto = ("APROBADO ✓" if pct >= 70 else
+                         "PARCIAL ⚠" if pct >= 40 else "REVISAR ✗")
+            lines.append(f"  VEREDICTO: {veredicto}")
         lines.append("=" * 60)
-        txt = "\n".join(lines)
-        print(txt)
+        return "\n".join(lines)
+
+    def print_scoreboard(self) -> dict:
+        """Imprime el tablero (ES) y guarda PUNTAJE.txt (ES) + SCOREBOARD.txt (EN)."""
+        res = self.evaluate()
+        txt_es = self._board_text(res, "es")
+        print(txt_es)
         with open(os.path.join(self.outdir, "PUNTAJE.txt"), "w",
                   encoding="utf-8") as f:
-            f.write(txt + "\n")
+            f.write(txt_es + "\n")
+        # Tablero en inglés para la entrega internacional (no se imprime en consola).
+        with open(os.path.join(self.outdir, "SCOREBOARD.txt"), "w",
+                  encoding="utf-8") as f:
+            f.write(self._board_text(res, "en") + "\n")
         return res
