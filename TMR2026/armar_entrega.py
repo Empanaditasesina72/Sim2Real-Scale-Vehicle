@@ -59,7 +59,8 @@ def main():
     print(">>> Copiando documentos...")
     docs = os.path.join(DEST, "03_documentos")
     os.makedirs(docs, exist_ok=True)
-    for d in ("ENTREGA_PROFESOR.md", "DELIVERY_PROFESSOR.md", "CALIBRACION_SIM.md"):
+    for d in ("DELIVERY_PROFESSOR.md", "ENTREGA_PROFESOR.md",
+              "CALIBRATION_SIM.md", "CALIBRACION_SIM.md"):
         p = os.path.join(HERE, d)
         if os.path.exists(p):
             shutil.copy2(p, os.path.join(docs, d))
@@ -104,8 +105,8 @@ def main():
             "   Contains the 3 CSV + 6 figures (ES + _en PNG) + SCOREBOARD.txt\n"
             "   (English) and PUNTAJE.txt (Spanish), both 100/100.\n\n"
             "03_documentos/            -> DELIVERY_PROFESSOR.md (English map of\n"
-            "   every PDF requirement), ENTREGA_PROFESOR.md (Spanish) and\n"
-            "   CALIBRACION_SIM.md.\n\n"
+            "   every PDF requirement) + CALIBRATION_SIM.md (English), plus the\n"
+            "   Spanish ENTREGA_PROFESOR.md and CALIBRACION_SIM.md.\n\n"
             "Source code: GitHub repos 'Carrito' (Python) and 'TMR2026_Sim' (Unity).\n"
         )
     print("   ✓ README.txt (English)")
