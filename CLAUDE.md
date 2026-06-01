@@ -127,7 +127,7 @@ These are full implementations kept for future wiring. Treat as library code:
 
 ## Vision tuning notes
 
-- HSV white filter in `vision/lane_pipeline.py` is currently set for **medium-low light** (e.g. phone flashlight illumination, not just direct lamp): `HSV_WHITE_LO = [0, 0, 130]`, `HSV_WHITE_HI = [179, 60, 255]`. If the black plastic track is leaking into the mask under bright light, raise `V_min` toward 150–160; if dim conditions still miss the lines, lower `V_min` toward 100–110.
+- HSV white filter in `vision/lane_pipeline.py` is **configurable per instance** via the `hsv_white_lo` / `hsv_white_hi` constructor args (they shadow the class attrs). The **class default targets the physical track under medium-low light** (e.g. phone flashlight, not just direct lamp): `HSV_WHITE_LO = [0, 0, 130]`, `HSV_WHITE_HI = [179, 60, 255]`. `main.py` (Pi) and `tools/test_camera.py` use this default; `main_simulator.py` (Unity) overrides to a much brighter white (`[0,0,200]`/`[179,40,255]`) because the sim's lines are pure-white on a dark floor. So Pi and sim share the whole algorithm but each gets the right white threshold. If the black plastic track leaks into the mask under bright light, raise `V_min` toward 150–160; if dim conditions miss the lines, lower `V_min` toward 100–110. **Never re-tune the class default to the sim's bright values — that blinds the physical car.**
 - Inspect the live mask via the top-right tile of `python main.py --display` (in VISION/AUTONOMOUS) or via `python tools/test_camera.py --no-yolo`.
 
 ## Known inconsistencies

@@ -225,6 +225,10 @@ class VehicleSimulator:
             frame_w=CAMERA_W, frame_h=CAMERA_H, debug=_DISPLAY,
             right_bias=0.75,
             roi_frac=0.30,      # BEV mira más lejos (se ven los 2 carriles)
+            # Unity: líneas MUY brillantes sobre fondo oscuro → blanco estricto.
+            # (El Pi físico usa el default V≥130 para luz media-baja.)
+            hsv_white_lo=[0, 0, 200],
+            hsv_white_hi=[179, 40, 255],
         )
         self.sign_det = SignDetector(
             model_path="weights/tmr_signs.pt",

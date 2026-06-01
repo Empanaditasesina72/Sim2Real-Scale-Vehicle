@@ -90,13 +90,18 @@ class LanePipeline:
     # alrededor) → necesitamos blanco MUY brillante y MUY desaturado para
     # rechazar todo lo que NO es la línea de la pista.
     #
-    # V_min=200 elimina grises medios del entorno (ropa, paredes mate).
-    # S_max=40 sigue aceptando blanco real pero rechaza grises azulados/cremas.
+    # DEFAULT = pista FÍSICA con luz media-baja (p.ej. linterna de celular):
+    #   V_min=130 capta líneas blancas tenues; S_max=60 rechaza colores.
+    # El SIMULADOR Unity (líneas MUY brillantes sobre fondo oscuro) pasa su
+    #   propio HSV por el constructor → hsv_white_lo=[0,0,200], hi=[179,40,255].
+    #   Así el Pi y el sim comparten TODO el algoritmo pero cada uno usa el
+    #   umbral de blanco adecuado a su iluminación.
     #
-    # Si en luz tenue las líneas se ven débiles, baja V_min a 170-180.
-    # Si en luz fuerte el plástico negro brillante "se cuela", sube V_min a 220.
-    HSV_WHITE_LO = np.array([  0,  0, 200])   # H, S_min=0,  V_min=200 (muy brillante)
-    HSV_WHITE_HI = np.array([179, 40, 255])   # H, S_max=40 (muy desaturado)
+    # Tuning físico (vía tools/test_camera.py): si en luz fuerte el plástico
+    #   negro "se cuela" en la máscara, sube V_min hacia 150-160; si en luz muy
+    #   tenue se pierden las líneas, baja V_min hacia 110.
+    HSV_WHITE_LO = np.array([  0,  0, 130])   # H, S_min=0,  V_min=130 (físico)
+    HSV_WHITE_HI = np.array([179, 60, 255])   # H, S_max=60
 
     # ── Sliding Windows ───────────────────────────────────────────────────────
     N_WINDOWS  = 9     # Número de franjas horizontales en el BEV
@@ -124,6 +129,8 @@ class LanePipeline:
         right_bias: float = RIGHT_BIAS,
         roi_frac: float = 0.5,
         bev_src_ratio=None,
+        hsv_white_lo=None,
+        hsv_white_hi=None,
     ):
         self._w     = frame_w
         self._h     = frame_h
@@ -134,6 +141,14 @@ class LanePipeline:
         # (que pasa roi_frac / bev_src_ratio propios para su cámara Unity).
         if bev_src_ratio is not None:
             self.BEV_SRC_RATIO = np.float32(bev_src_ratio)
+
+        # HSV del blanco configurable por instancia: el Pi físico usa los
+        # defaults de clase (luz media-baja, V≥130); el simulador Unity pasa
+        # un umbral más brillante (V≥200). Sombrean los atributos de clase.
+        if hsv_white_lo is not None:
+            self.HSV_WHITE_LO = np.array(hsv_white_lo)
+        if hsv_white_hi is not None:
+            self.HSV_WHITE_HI = np.array(hsv_white_hi)
 
         # ROI: ignorar la parte superior del frame. roi_frac configurable.
         self._roi_y = int(frame_h * roi_frac)
