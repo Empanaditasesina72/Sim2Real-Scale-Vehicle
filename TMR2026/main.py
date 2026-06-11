@@ -89,6 +89,7 @@ from config import (
     BTN_MANUAL, BTN_VISION, BTN_AUTONOMOUS, BTN_PARKING, BTN_EMERGENCY,
     AXIS_STEER, AXIS_THROTTLE, AXIS_BRAKE,
     JOYSTICK_DEADBAND as DEADBAND,
+    USE_IMX500_NPU, IMX500_RPK_PATH, IMX500_LABELS_PATH, IMX500_CONF,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -217,15 +218,11 @@ class VehicleTMR:
         self.brake_light = BrakeLight(pin=PIN_LED_BRAKE)
 
         # ── Visión ────────────────────────────────────────────────
-        self.camera = CameraStream(
-            width=CAMERA_W, height=CAMERA_H,
-            fps=CAMERA_FPS, awb_warmup_s=AWB_WARMUP_S,
-        )
+        # NPU del IMX500 si hay .rpk (inferencia on-chip, CPU libre);
+        # si no, cámara normal + YOLO en CPU (NCNN).
+        self.camera, self.sign_det = self._build_vision()
         self.lane_pipe = LanePipeline(
             frame_w=CAMERA_W, frame_h=CAMERA_H, debug=_DISPLAY
-        )
-        self.sign_det = SignDetector(
-            model_path=YOLO_MODEL, conf=YOLO_CONF, imgsz=YOLO_IMGSZ
         )
 
         # ── PID y FSM ─────────────────────────────────────────────
@@ -265,6 +262,50 @@ class VehicleTMR:
         signal.signal(signal.SIGTERM, self._handle_signal)
 
         print("[INIT] Hardware listo. Esperando mando Bluetooth...")
+
+    # ─── Construcción del backend de visión ───────────────────────────────────
+
+    def _build_vision(self):
+        """
+        Elige el backend de detección de señales según el hardware disponible:
+
+          1. NPU IMX500 (`vision/imx500_detector.py`) — el modelo corre DENTRO
+             de la cámara y la CPU queda libre. Requiere el .rpk generado con
+             `tools/export_imx500.py`. Un solo objeto hace de cámara y detector.
+          2. CPU (CameraStream + SignDetector NCNN) — el camino validado.
+
+        Retorna (camera, sign_det). Si el NPU falla por lo que sea, cae al
+        camino CPU sin interrumpir el arranque.
+        """
+        if USE_IMX500_NPU and os.path.isfile(IMX500_RPK_PATH):
+            try:
+                from vision.imx500_detector import IMX500CameraStream
+                npu = IMX500CameraStream(
+                    rpk_path     = IMX500_RPK_PATH,
+                    labels_path  = IMX500_LABELS_PATH,
+                    width        = CAMERA_W,
+                    height       = CAMERA_H,
+                    fps          = CAMERA_FPS,
+                    conf         = IMX500_CONF,
+                    awb_warmup_s = AWB_WARMUP_S,
+                )
+                print("[VISION] Backend: NPU IMX500 (inferencia on-chip)")
+                return npu, npu
+            except Exception as e:
+                print(f"[VISION] NPU no disponible ({e}) — usando camino CPU.")
+        elif USE_IMX500_NPU:
+            print(f"[VISION] Sin .rpk ({IMX500_RPK_PATH}) — usando camino CPU."
+                  "  Genéralo con: python tools/export_imx500.py")
+
+        camera = CameraStream(
+            width=CAMERA_W, height=CAMERA_H,
+            fps=CAMERA_FPS, awb_warmup_s=AWB_WARMUP_S,
+        )
+        sign_det = SignDetector(
+            model_path=YOLO_MODEL, conf=YOLO_CONF, imgsz=YOLO_IMGSZ
+        )
+        print("[VISION] Backend: CPU (CameraStream + SignDetector)")
+        return camera, sign_det
 
     # ─── Arranque y bucle principal ───────────────────────────────────────────
 

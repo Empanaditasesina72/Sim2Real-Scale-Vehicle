@@ -69,6 +69,19 @@ STEERING_INVERTED   = True
 # ============================================================
 IMX500_MODEL_PATH = "/usr/share/imx500-models/imx500_network_efficientdet_lite0_pp.rpk"
 
+# ── NPU on-chip con el modelo PROPIO (tmr_signs) ─────────────
+# Si USE_IMX500_NPU=True y existe el .rpk, main.py corre la detección de
+# señales DENTRO de la cámara (vision/imx500_detector.py) y la CPU queda
+# libre. Si el .rpk no existe o falla, cae automáticamente al camino CPU
+# (CameraStream + SignDetector NCNN) sin romper nada.
+# Generar el .rpk EN LA PI (o cualquier Linux): python tools/export_imx500.py
+USE_IMX500_NPU     = True
+IMX500_RPK_PATH    = "weights/tmr_signs_imx500.rpk"
+IMX500_LABELS_PATH = "weights/tmr_signs_imx500_labels.txt"
+# Confianza para el modelo INT8 del NPU. La cuantización puede mover las
+# confianzas respecto al .pt — calibrar en pista (arranca igual que CPU).
+IMX500_CONF        = 0.55
+
 CAMERA_WIDTH  = 640
 CAMERA_HEIGHT = 480
 CAMERA_FPS    = 30

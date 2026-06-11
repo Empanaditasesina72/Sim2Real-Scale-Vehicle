@@ -57,7 +57,8 @@ carro físico — eso es **Sim2Real**.
 | Estacionamiento en batería | ✅ Producción (Pi **y** sim, botón **Y**) | `control/parking_fsm.py` |
 | Señales direccionales + freno | ✅ Producción | `hardware/signals.py`, `hardware/brake_light.py` |
 | Gemelo digital Unity (Sim2Real) | ✅ Validado 100/100 | `main_simulator.py` + repo [TMR2026_Sim](https://github.com/Empanaditasesina72/TMR2026_Sim-2026-05-24_20-19-01) |
-| Rebase / cruce peatonal / NPU on-chip | 🧪 Disponible (no integrado) | `autonomy/`, `hardware/camera_manager.py` |
+| Detección en el **NPU de la cámara** | ✅ Integrado (auto si existe el `.rpk`) | `vision/imx500_detector.py` · [guía](TMR2026/docs/IMX500_NPU.md) |
+| Rebase / cruce peatonal | 🧪 Disponible (no integrado) | `autonomy/` |
 
 ---
 
@@ -351,7 +352,8 @@ Carrito/
     ├── vision/
     │   ├── camera_stream.py   ← Picamera2 · RGB→BGR
     │   ├── lane_pipeline.py   ← carril: BEV + sliding windows + EMA  (ACTIVO)
-    │   └── sign_detector.py   ← YOLOv8n + respaldo por color          (ACTIVO)
+    │   ├── sign_detector.py   ← YOLOv8n NCNN + respaldo por color    (ACTIVO)
+    │   └── imx500_detector.py ← señales en el NPU de la cámara (si hay .rpk)
     │
     ├── control/
     │   ├── fsm.py             ← FSM de conducción (5 estados)
@@ -368,6 +370,7 @@ Carrito/
     │
     ├── tools/test_camera.py   ← preview cámara+carril+YOLO (sin motores)
     ├── tools/export_model.py  ← exporta el .pt a NCNN (re-entrenamientos)
+    ├── tools/export_imx500.py ← exporta el .pt al NPU de la cámara (.rpk, en la Pi)
     ├── weights/
     │   ├── tmr_signs.pt           ← modelo YOLO (PyTorch, respaldo)
     │   └── tmr_signs_ncnn_model/  ← export NCNN — el que usa la Pi (3-4× más rápido)
@@ -506,6 +509,12 @@ MotorDriver   (daemon)  ── rampa soft-start 50 Hz (evita caída de voltaje)
 > Raspberry Pi. Mismas detecciones que el `.pt` (verificado), 3-4× más rápido en la CPU ARM de la
 > Pi 5. Si falta, cae al `.pt` y en última instancia al detector de STOP por color. Tras
 > re-entrenar el modelo: `python tools/export_model.py`.
+
+> 🧠 **Nivel máximo (NPU on-chip):** el modelo también puede correr **dentro de la cámara** —
+> el IMX500 infiere en su acelerador neuronal y la CPU queda en ~0 %. Genera el `.rpk` una sola
+> vez en la Pi (`python tools/export_imx500.py`) y `main.py` lo detecta solo al arrancar, con
+> cadena de respaldo NPU → NCNN → `.pt` → color. Guía completa:
+> [`TMR2026/docs/IMX500_NPU.md`](TMR2026/docs/IMX500_NPU.md).
 
 ---
 
