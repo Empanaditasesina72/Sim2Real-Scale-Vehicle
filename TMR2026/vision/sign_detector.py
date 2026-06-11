@@ -261,21 +261,32 @@ class SignDetector:
         return path
 
     def _load_model(self) -> None:
-        try:
-            from ultralytics import YOLO
-            path = self._resolve_model_path()
-            # task="detect" explícito: los exports NCNN no traen el task en
-            # la metadata y ultralytics imprimiría un warning cada arranque.
-            self._model = YOLO(path, task="detect")
-            # Warm-up: una inferencia dummy para compilar el grafo
-            dummy = np.zeros((self._imgsz, self._imgsz, 3), dtype=np.uint8)
-            self._model(dummy, imgsz=self._imgsz, conf=self._conf, verbose=False)
-            backend = "NCNN" if path.endswith("_ncnn_model") else "PyTorch"
-            print(f"[YOLO] Modelo cargado ({backend}): {path}")
-        except Exception as e:
-            print(f"[YOLO] Modelo no disponible ({e}).")
-            print("[YOLO] Usando detector de STOP por COLOR (rojo) como respaldo.")
-            self._model = None
+        path = self._resolve_model_path()
+        # Si el NCNN falla (p.ej. falta el paquete `ncnn` y no hay internet
+        # para auto-instalarlo), reintentar con el .pt antes de degradar al
+        # detector por color.
+        candidates = [path]
+        if path != self._model_path:
+            candidates.append(self._model_path)
+
+        for cand in candidates:
+            try:
+                from ultralytics import YOLO
+                # task="detect" explícito: los exports NCNN no traen el task
+                # en la metadata y ultralytics avisaría en cada arranque.
+                model = YOLO(cand, task="detect")
+                # Warm-up: una inferencia dummy para compilar el grafo
+                dummy = np.zeros((self._imgsz, self._imgsz, 3), dtype=np.uint8)
+                model(dummy, imgsz=self._imgsz, conf=self._conf, verbose=False)
+                backend = "NCNN" if cand.endswith("_ncnn_model") else "PyTorch"
+                print(f"[YOLO] Modelo cargado ({backend}): {cand}")
+                self._model = model
+                return
+            except Exception as e:
+                print(f"[YOLO] No pude cargar {cand} ({e}).")
+
+        print("[YOLO] Usando detector de STOP por COLOR (rojo) como respaldo.")
+        self._model = None
 
     # ─── Hilo de detección ────────────────────────────────────────────────────
 
