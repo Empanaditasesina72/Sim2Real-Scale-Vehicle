@@ -37,6 +37,9 @@ numpy>=1.24
 # Detección de señales YOLOv8 (weights/tmr_signs.pt).
 # Si no está instalado, SignDetector degrada al detector por color.
 ultralytics>=8.0
+# Runtime NCNN: SignDetector prefiere weights/tmr_signs_ncnn_model/
+# (3-4× más rápido que PyTorch en la CPU ARM de la Pi 5).
+ncnn
 
 # --- Solo PC / Sim2Real (validación, NO necesario en el Pi) ---
 # matplotlib: gráficas del artículo (analyze_results.py)

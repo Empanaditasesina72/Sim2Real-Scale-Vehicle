@@ -1,0 +1,25 @@
+description: Ultralytics tmr_signs model trained on traffic_lights/data.yaml
+author: Ultralytics
+date: '2026-06-11T06:10:48.756918'
+version: 8.4.56
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+batch: 1
+imgsz:
+- 320
+- 320
+names:
+  0: green
+  1: left
+  2: red
+  3: right
+  4: stop
+  5: straight
+  6: yellow
+args:
+  batch: 1
+  half: true
+channels: 3
+end2end: false

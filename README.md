@@ -367,7 +367,10 @@ Carrito/
     ├── analyze_results.py     ← figuras del artículo (matplotlib)
     │
     ├── tools/test_camera.py   ← preview cámara+carril+YOLO (sin motores)
-    ├── weights/tmr_signs.pt   ← modelo YOLO activo
+    ├── tools/export_model.py  ← exporta el .pt a NCNN (re-entrenamientos)
+    ├── weights/
+    │   ├── tmr_signs.pt           ← modelo YOLO (PyTorch, respaldo)
+    │   └── tmr_signs_ncnn_model/  ← export NCNN — el que usa la Pi (3-4× más rápido)
     └── systemd/               ← auto-arranque en boot
 ```
 
@@ -390,7 +393,7 @@ sudo apt update && sudo apt install -y \
 pip3 install --break-system-packages \
   adafruit-circuitpython-pca9685 adafruit-circuitpython-vl53l0x \
   adafruit-extended-bus adafruit-blinka \
-  opencv-python-headless lgpio ultralytics
+  opencv-python-headless lgpio ultralytics ncnn
 ```
 </details>
 
@@ -493,10 +496,16 @@ pytest TMR2026/tests -v
 ```
 Bucle principal (50 Hz) ── gamepad → FSM → servo → motor → señales.tick()
 CameraStream  (daemon)  ── 30 FPS · RGB→BGR · bloquea AE/AWB tras warmup
-SignDetector  (daemon)  ── ~12 FPS · YOLO CPU · cola no bloqueante
+SignDetector  (daemon)  ── 15 Hz · YOLO NCNN (CPU ARM) · cola no bloqueante
 DistanceSensor(daemon)  ── 50 Hz · VL53L0X frontal + trasero
 MotorDriver   (daemon)  ── rampa soft-start 50 Hz (evita caída de voltaje)
 ```
+
+> ⚡ **Modelo optimizado para el hardware:** `SignDetector` carga automáticamente el export
+> **NCNN** (`weights/tmr_signs_ncnn_model/`, FP16) — el runtime que Ultralytics recomienda para
+> Raspberry Pi. Mismas detecciones que el `.pt` (verificado), 3-4× más rápido en la CPU ARM de la
+> Pi 5. Si falta, cae al `.pt` y en última instancia al detector de STOP por color. Tras
+> re-entrenar el modelo: `python tools/export_model.py`.
 
 ---
 

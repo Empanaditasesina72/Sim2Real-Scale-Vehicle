@@ -13,6 +13,7 @@ Modelo por defecto: weights/tmr_signs.pt (entrenado para señales TMR).
 Fallback:           weights/yolov8n.pt    (modelo COCO — usa stop sign y persona).
 """
 
+import os
 import threading
 import time
 from typing import Optional
@@ -153,8 +154,11 @@ class SignDetector:
     # Clases de señales relevantes para TMR (ajustar según modelo entrenado)
     SIGN_CLASSES = {"stop_sign", "stop sign", "crosswalk", "cross walk"}
 
-    # Frecuencia máxima del detector (Hz) — Pi 5 CPU puede con ~15 FPS a 320px
-    MAX_HZ = 12.0
+    # Frecuencia máxima del detector (Hz). Con el modelo NCNN la Pi 5 infiere
+    # en ~25-30 ms, así que 15 Hz cabe sobrado y la histéresis de 3 frames
+    # confirma una señal en ~200 ms. Si solo está el .pt (PyTorch, más lento)
+    # el hilo simplemente corre a su máximo real — este valor es solo el tope.
+    MAX_HZ = 15.0
 
     # Histéresis: una etiqueta se publica solo si aparece en N frames seguidos.
     # Con el detector por color de respaldo activo, 3 frames es seguro
@@ -242,14 +246,32 @@ class SignDetector:
 
     # ─── Carga de modelo ─────────────────────────────────────────────────────
 
+    def _resolve_model_path(self) -> str:
+        """
+        Prefiere la versión NCNN exportada (`<modelo>_ncnn_model/`) si existe
+        junto al `.pt`. En la Pi 5 (CPU ARM) NCNN es 3-4× más rápido que
+        PyTorch con la misma precisión. Se genera con `tools/export_model.py`
+        y viene versionada en el repo — si falta, se usa el `.pt` normal.
+        """
+        path = self._model_path
+        if path.endswith(".pt"):
+            ncnn_dir = path[:-3] + "_ncnn_model"
+            if os.path.isdir(ncnn_dir):
+                return ncnn_dir
+        return path
+
     def _load_model(self) -> None:
         try:
             from ultralytics import YOLO
-            self._model = YOLO(self._model_path)
+            path = self._resolve_model_path()
+            # task="detect" explícito: los exports NCNN no traen el task en
+            # la metadata y ultralytics imprimiría un warning cada arranque.
+            self._model = YOLO(path, task="detect")
             # Warm-up: una inferencia dummy para compilar el grafo
             dummy = np.zeros((self._imgsz, self._imgsz, 3), dtype=np.uint8)
             self._model(dummy, imgsz=self._imgsz, conf=self._conf, verbose=False)
-            print(f"[YOLO] Modelo cargado: {self._model_path}")
+            backend = "NCNN" if path.endswith("_ncnn_model") else "PyTorch"
+            print(f"[YOLO] Modelo cargado ({backend}): {path}")
         except Exception as e:
             print(f"[YOLO] Modelo no disponible ({e}).")
             print("[YOLO] Usando detector de STOP por COLOR (rojo) como respaldo.")

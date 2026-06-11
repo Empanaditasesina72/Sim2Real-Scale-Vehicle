@@ -49,7 +49,7 @@ See `TMR2026/docs/SETUP.md` for dtoverlay config and udev rules.
 
 ### Threads
 - `CameraStream` (vision/camera_stream.py) — 30 FPS, BGR frames, locks AE/AWB after warmup
-- `SignDetector` (vision/sign_detector.py) — ~12 FPS YOLO CPU, loads `weights/tmr_signs.pt`
+- `SignDetector` (vision/sign_detector.py) — YOLO CPU capped at 15 Hz. Auto-prefers the NCNN export `weights/tmr_signs_ncnn_model/` (3-4× faster than PyTorch on the Pi 5's ARM CPU, identical detections); falls back to `weights/tmr_signs.pt`, then to the color detector
 - `DistanceSensor` (hardware/distance_sensor.py) — 50 Hz polling, front + rear VL53L0X
 - `MotorDriver` (hardware/motor.py) — internal 50 Hz soft-start ramp thread (prevents voltage sag)
 - Main loop in `main.py` at 50 Hz: gamepad → FSM → servo → motor
@@ -116,6 +116,7 @@ These are full implementations kept for future wiring. Treat as library code:
 ## YOLO Models
 
 - `TMR2026/weights/tmr_signs.pt` — active model loaded by `SignDetector` at `conf=0.55` (same as the validated simulator — 0.15 caused phantom detections that made the FSM brake randomly). All 7 classes are surfaced (`green, left, red, right, stop, straight, yellow`), but only `stop`/`red` gate the FSM (see brake gating above).
+- `TMR2026/weights/tmr_signs_ncnn_model/` — NCNN export of the same model (FP16, imgsz=320), **preferred automatically** by `SignDetector._resolve_model_path()`. Committed to the repo so the Pi never has to export. Regenerate after retraining with `python tools/export_model.py` (works on PC or Pi; output is portable). Verified: identical labels/confidences to the `.pt` on dataset images.
 - `_legacy/runs/detect/train2/weights/` — source of the active model (checkpoint + training artifacts).
 - `_legacy/runs/detect/train/weights/best.pt` — larger variant (~18 MB) kept as backup.
 - `traffic_lights/` — Roboflow v9 dataset (1470 close-up sign images, no track photos). Use to re-train if adding a `crosswalk` class.
