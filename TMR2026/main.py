@@ -13,11 +13,13 @@ Modos:
   STANDBY    → Motor OFF, servo al centro. Espera al mando.
   MANUAL     → Palanca izq → servo | R2 → avance | L2 → reversa
   AUTONOMOUS → FSM de 5 estados (CRUCERO/PRECAUCIÓN/FRENADO/ESPERA/REANUDAR)
+  PARKING    → Estacionamiento en batería (SEARCH→MANEUVER→PARKED)
 
 Botones gamepad (PS4/Xbox genérico):
   Cuadrado / X  → Toggle AUTONOMOUS (activa/desactiva)
   Cruz    / A   → MANUAL
   Círculo / B   → Modo VISION (cámara ON, motores OFF, debug)
+  Triángulo / Y → Toggle PARKING (estacionamiento en batería)
   Start         → Emergencia: freno inmediato + MANUAL
 """
 
@@ -26,8 +28,6 @@ import sys
 import time
 import signal
 import subprocess
-import threading
-from typing import Optional
 
 import cv2
 
@@ -75,19 +75,21 @@ def _release_gpio_from_systemd() -> None:
     print("[SYS] Servicio detenido — GPIO libre.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONSTANTES HARDWARE (NO MODIFICAR SIN CAMBIAR EL CABLEADO)
+# CONSTANTES HARDWARE — única fuente de verdad: config.py
+# (Los buses I²C, canal PCA9685 y pines XSHUT los leen los drivers
+#  directamente de config.py; aquí solo se importa lo que usa este módulo.)
 # ─────────────────────────────────────────────────────────────────────────────
-MOTOR_RPWM        = 18      # GPIO BCM
-MOTOR_LPWM        = 13      # GPIO BCM
-SERVO_I2C_BUS     = 3       # Bus I2C via dtoverlay (GPIO 0=SDA, 1=SCL)
-SERVO_CHANNEL     = 0       # Canal PCA9685
-SERVO_MIN_PULSE   = 500     # µs → 0°
-SERVO_MAX_PULSE   = 2500    # µs → 180°
-SERVO_CENTER      = 90.0    # grados
-SERVO_MIN         = 45.0    # límite físico izquierda
-SERVO_MAX         = 135.0   # límite físico derecha
-TOF_I2C_BUS       = 4       # Bus I2C via dtoverlay (GPIO 23=SDA, 22=SCL)
-TOF_XSHUT_PIN     = 24      # constante inerte — DistanceSensor lee config.py:PIN_TOF_XSHUT_FRONT directamente
+from config import (
+    PIN_MOTOR_RPWM     as MOTOR_RPWM,     # GPIO BCM 18 — PWM avance
+    PIN_MOTOR_LPWM     as MOTOR_LPWM,     # GPIO BCM 13 — PWM reversa
+    SERVO_CENTER_ANGLE as SERVO_CENTER,   # 90° = ruedas al frente
+    SERVO_MIN_ANGLE    as SERVO_MIN,      # tope físico izquierda (58°)
+    SERVO_MAX_ANGLE    as SERVO_MAX,      # tope físico derecha  (122°)
+    PIN_LED_TURN_LEFT, PIN_LED_TURN_RIGHT, PIN_LED_BRAKE, SIGNAL_BLINK_HZ,
+    BTN_MANUAL, BTN_VISION, BTN_AUTONOMOUS, BTN_PARKING, BTN_EMERGENCY,
+    AXIS_STEER, AXIS_THROTTLE, AXIS_BRAKE,
+    JOYSTICK_DEADBAND as DEADBAND,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTES DE COMPORTAMIENTO
@@ -98,28 +100,19 @@ CAMERA_H          = 480
 CAMERA_FPS        = 30
 AWB_WARMUP_S      = 2.0     # segundos estabilización AE/AWB
 YOLO_MODEL        = "weights/tmr_signs.pt"
-YOLO_CONF         = 0.15      # muy bajo: el modelo entrenado puede no reconocer
-                              # señales con estilo distinto al training set, así
-                              # que damos tolerancia y el detector por color
-                              # actúa como respaldo (ver SignDetector).
+YOLO_CONF         = 0.55      # paridad con el simulador validado (Sim2Real).
+                              # Con 0.15 el modelo inventaba señales (verde,
+                              # flechas…) y la FSM frenaba sin razón. Si la
+                              # señal física no se parece al training set, el
+                              # detector por COLOR de SignDetector la respalda.
 YOLO_IMGSZ        = 320
 
 # PID de dirección (error en px → corrección en grados)
 PID_KP            = 0.08    # Subir si el coche oscila poco → aumentar
 PID_KI            = 0.002   # Anti-windup a long-term drift
 PID_KD            = 0.025   # Amortiguación → aumentar si el servo vibra
-PID_OUT_MIN       = -(SERVO_CENTER - SERVO_MIN)   # -45°
-PID_OUT_MAX       =  (SERVO_MAX - SERVO_CENTER)   # +45°
-
-# Gamepad (PS4 / Xbox genérico)
-BTN_AUTONOMOUS    = 2       # Cuadrado / X
-BTN_MANUAL        = 0       # Cruz / A
-BTN_VISION        = 1       # Círculo / B
-BTN_EMERGENCY     = 9       # Start / Options
-AXIS_STEER        = 0       # Palanca izquierda X  (−1=izq, +1=der)
-AXIS_THROTTLE     = 5       # Gatillo R2           (−1=libre, +1=fondo)
-AXIS_BRAKE        = 2       # Gatillo L2
-DEADBAND          = 0.08
+PID_OUT_MIN       = -(SERVO_CENTER - SERVO_MIN)   # −32° (tope físico real)
+PID_OUT_MAX       =  (SERVO_MAX - SERVO_CENTER)   # +32°
 
 # ─────────────────────────────────────────────────────────────────────────────
 # IMPORTAR MÓDULOS DEL PROYECTO
@@ -133,11 +126,8 @@ from vision.camera_stream      import CameraStream
 from vision.lane_pipeline      import LanePipeline, LaneResult
 from vision.sign_detector      import SignDetector
 from control.pid_controller    import PIDController
-from control.fsm               import AutonomousFSM, FSMState
-
-from config import (
-    PIN_LED_TURN_LEFT, PIN_LED_TURN_RIGHT, PIN_LED_BRAKE, SIGNAL_BLINK_HZ,
-)
+from control.fsm               import AutonomousFSM
+from control.parking_fsm       import ParkingFSM, ParkingState
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -203,6 +193,10 @@ class VehicleTMR:
         MANUAL     = "MANUAL"
         VISION     = "VISION"
         AUTONOMOUS = "AUTONOMOUS"
+        PARKING    = "PARKING"     # estacionamiento en batería
+
+    # Modos que usan la ventana de debug (--display)
+    DISPLAY_MODES = ("VISION", "AUTONOMOUS", "PARKING")
 
     MODE_COOLDOWN_S = 0.4   # mínimo entre cambios de modo (anti-rebote)
 
@@ -246,6 +240,8 @@ class VehicleTMR:
             signals     = self.signals,
             brake_light = self.brake_light,
         )
+        # FSM de estacionamiento en batería (misma que validó el simulador)
+        self.parking = ParkingFSM(self.motor, self.steering)
 
         # ── Gamepad (pygame) ──────────────────────────────────────
         self._joystick = None
@@ -254,7 +250,7 @@ class VehicleTMR:
         # ── Teclado (alternativa sin gamepad) ─────────────────────
         self._kb = _KeyboardReader()
         if self._kb.enabled:
-            print("[KB] Atajos:  A=MANUAL  B=VISION  X=AUTO  "
+            print("[KB] Atajos:  A=MANUAL  B=VISION  X=AUTO  P=PARKING  "
                   "Space=EMERG  S=STANDBY  Q=salir")
 
         # ── Estado interno ────────────────────────────────────────
@@ -263,6 +259,7 @@ class VehicleTMR:
         self._last_mode_t     = 0.0
         self._last_lane       = LaneResult(error_px=0.0, confidence=0.0)
         self._btn_prev: dict  = {}
+        self._sign_action     = ""   # acción de la señal más cercana (telemetría)
 
         signal.signal(signal.SIGINT,  self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -396,6 +393,17 @@ class VehicleTMR:
                 self._set_mode(self.Mode.VISION)
             return
 
+        # Triángulo / Y → Toggle PARKING (estacionamiento en batería)
+        if btn(BTN_PARKING):
+            if self._mode == self.Mode.PARKING:
+                self._set_mode(self.Mode.MANUAL)
+            else:
+                self.fsm.deactivate()
+                self.motor.brake()
+                self._set_mode(self.Mode.PARKING)
+                self.parking.activate()
+            return
+
     # ─── Teclado (espejo del gamepad) ─────────────────────────────────────────
 
     def _poll_keyboard(self) -> None:
@@ -407,7 +415,7 @@ class VehicleTMR:
 
     def _process_key(self, key: str) -> None:
         """
-        A=MANUAL  B=VISION  X=AUTO (toggle)
+        A=MANUAL  B=VISION  X=AUTO (toggle)  P=PARKING (toggle)
         Space=EMERG  S=STANDBY  Q=salir
         Espacio y Q ignoran el cooldown (parada inmediata).
         """
@@ -450,6 +458,16 @@ class VehicleTMR:
                 self.motor.brake()
                 self._set_mode(self.Mode.AUTONOMOUS)
                 self.fsm.activate()
+        elif k == "p":
+            if self._mode == self.Mode.PARKING:
+                print("\n[KB] PARKING -> MANUAL")
+                self._set_mode(self.Mode.MANUAL)
+            else:
+                print("\n[KB] -> PARKING (estacionamiento en bateria)")
+                self.fsm.deactivate()
+                self.motor.brake()
+                self._set_mode(self.Mode.PARKING)
+                self.parking.activate()
         elif k == "s":
             print("\n[KB] -> STANDBY")
             self.fsm.deactivate()
@@ -459,11 +477,14 @@ class VehicleTMR:
     def _set_mode(self, mode: str) -> None:
         if mode != self._mode:
             print(f"[MODE] {self._mode} → {mode}")
+            # Al salir de PARKING por cualquier vía (botón, teclado,
+            # emergencia) la maniobra se cancela y el coche queda frenado.
+            if self._mode == self.Mode.PARKING:
+                self.parking.deactivate()
             # Cerrar la ventana de debug al salir de un modo que la usa
-            # (VISION o AUTONOMOUS) hacia uno que no (STANDBY / MANUAL).
-            display_modes = (self.Mode.VISION, self.Mode.AUTONOMOUS)
-            if (_DISPLAY and self._mode in display_modes
-                    and mode not in display_modes):
+            # (VISION/AUTONOMOUS/PARKING) hacia uno que no (STANDBY/MANUAL).
+            if (_DISPLAY and self._mode in self.DISPLAY_MODES
+                    and mode not in self.DISPLAY_MODES):
                 cv2.destroyAllWindows()
             # VISION usa el PID solo para preview — al entrar/salir lo
             # reseteamos para que el integrador no se contamine entre modos.
@@ -493,14 +514,48 @@ class VehicleTMR:
         self.fsm.lane_error   = self._last_lane.error_px
         self.fsm.lane_conf    = self._last_lane.confidence
         self.fsm.lidar_mm     = self.sensor.front_mm
-        self.fsm.sign_visible = self.sign_det.has_any_sign()
 
-        # Distancia a la señal STOP estimada por bbox (fallback si no hay lidar)
-        closest = self.sign_det.closest_sign("stop_sign")
+        # Señales que OBLIGAN a frenar: STOP y semáforo en ROJO.
+        # (green/yellow/left/right/straight NO frenan — con has_any_sign()
+        #  el carro frenaba hasta con el semáforo en VERDE. Misma lógica
+        #  que validó el simulador Sim2Real.)
+        stop_like = (self.sign_det.has_sign("stop_sign")
+                     or self.sign_det.has_sign("red"))
+        self.fsm.sign_visible = stop_like
+
+        # Distancia a la señal de frenado más cercana (STOP o rojo),
+        # estimada por bbox — fallback si no hay lidar frontal.
+        closest = (self.sign_det.closest_sign("stop_sign")
+                   or self.sign_det.closest_sign("red"))
         if closest is not None and closest.distance_m is not None:
             self.fsm.sign_distance_mm = closest.distance_m * 1000.0
         else:
             self.fsm.sign_distance_mm = None
+
+        # Acción según la señal detectada (para overlay + log).
+        self._sign_action = self._decide_sign_action()
+
+    # Acciones por tipo de señal (lo que el carro "hace" al verla).
+    SIGN_ACTIONS = {
+        "stop_sign": "ALTO total (5 s)",
+        "red":       "Semaforo ROJO: frenar",
+        "green":     "Semaforo VERDE: avanzar",
+        "yellow":    "Semaforo AMARILLO: precaucion",
+        "left":      "Flecha IZQUIERDA",
+        "right":     "Flecha DERECHA",
+        "straight":  "Seguir RECTO",
+    }
+
+    def _decide_sign_action(self) -> str:
+        """Devuelve el texto de acción de la señal más cercana detectada."""
+        dets = self.sign_det.get_detections()
+        if not dets:
+            return ""
+        with_dist = [d for d in dets if d.distance_m is not None]
+        if not with_dist:
+            return self.SIGN_ACTIONS.get(dets[0].label, "")
+        closest = min(with_dist, key=lambda d: d.distance_m)
+        return self.SIGN_ACTIONS.get(closest.label, closest.label)
 
     # ─── Modos de operación ───────────────────────────────────────────────────
 
@@ -517,6 +572,28 @@ class VehicleTMR:
                 self._log_autonomous()
                 if _DISPLAY:
                     self._render_debug_view(mode_label="AUT")
+            case self.Mode.PARKING:
+                self._do_parking(dt)
+
+    def _do_parking(self, dt: float) -> None:
+        """Estacionamiento en batería — misma ParkingFSM validada en el sim."""
+        self.parking.lidar_mm = self.sensor.front_mm
+        self.parking.update(dt)
+
+        # Luces: hazard durante toda la maniobra; freno encendido al quedar
+        # estacionado (coche detenido = misma señalización que ESPERA).
+        self.signals.set_mode(SignalMode.HAZARD)
+        if self.parking.state == ParkingState.PARKED:
+            self.brake_light.on()
+        else:
+            self.brake_light.off()
+
+        print(f"\r[PARK] {self.parking.state.name:<16} "
+              f"duty:{self.motor.current_duty:+.0f}%  "
+              f"angle:{self.steering.current_angle:5.1f}°   ",
+              end="", flush=True)
+        if _DISPLAY:
+            self._render_debug_view(mode_label="PARK")
 
     def _log_autonomous(self) -> None:
         """Línea de status del modo autónomo — incluye lo que ve YOLO."""
@@ -528,11 +605,12 @@ class VehicleTMR:
         else:
             sign_txt = "—"
         lidar_txt = f"{self.sensor.front_mm:.0f}" if self.sensor.front_mm else "---"
+        action = self._sign_action or "—"
         print(f"\r[AUT] {self.fsm.state.name:<10}  "
               f"err:{self._last_lane.error_px:+5.0f}px  "
               f"angle:{self.steering.current_angle:5.1f}°  "
               f"duty:{self.motor.current_duty:+.0f}%  "
-              f"lidar:{lidar_txt}mm  signs:{sign_txt}   ",
+              f"lidar:{lidar_txt}mm  signs:{sign_txt}  -> {action}   ",
               end="", flush=True)
 
     def _do_standby(self) -> None:
@@ -645,7 +723,7 @@ class VehicleTMR:
               f"signs:{sign_txt}   ",
               end="", flush=True)
 
-    # ─── Render compartido (VISION + AUTONOMOUS) ──────────────────────────────
+    # ─── Render compartido (VISION + AUTONOMOUS + PARKING) ────────────────────
 
     def _render_debug_view(self, mode_label: str) -> None:
         """
@@ -654,10 +732,10 @@ class VehicleTMR:
           • Mosaico superior: BEV (vista cenital) + máscara HSV.
           • Bounding boxes de YOLO con etiqueta + confianza + distancia.
           • Panel inferior izquierdo: valores PID (P/I/D/corr) y error.
-          • Panel inferior derecho: lista de objetos detectados con su nombre.
+          • Panel inferior derecho: objetos detectados + acción de la señal.
 
-        Llamado tanto desde VISION como desde AUTONOMOUS cuando --display
-        está activo. No bloquea: cv2.waitKey(1).
+        Llamado desde VISION, AUTONOMOUS y PARKING cuando --display está
+        activo. No bloquea: cv2.waitKey(1).
         """
         frame = self.camera.get_frame()
         if frame is None:
@@ -694,19 +772,26 @@ class VehicleTMR:
             f"lidar :{lidar:.0f}mm" if lidar else "lidar :---",
         ])
 
-        # ── Panel inferior derecho: objetos detectados ──
+        # ── Panel inferior derecho: objetos detectados + acción ──
         if dets:
             obj_lines = ["OBJETOS DETECTADOS:"]
-            for d in dets[:5]:
+            for d in dets[:4]:
                 dist = f" @{(d.distance_m or 0)*100:.0f}cm" if d.distance_m else ""
                 obj_lines.append(f"- {d.label}  {d.confidence:.0%}{dist}")
+            if self._sign_action:
+                obj_lines.append(f"-> {self._sign_action}")
         else:
             obj_lines = ["OBJETOS DETECTADOS:", "- (ninguno)"]
         self._draw_panel(vis, x=336, y=200, w=296, h=160, lines=obj_lines)
 
-        # ── Estado FSM en la barra inferior ──
-        try:    fsm_txt = f"FSM:{self.fsm.state.name}"
-        except Exception: fsm_txt = ""
+        # ── Estado FSM en la barra inferior (conducción o parking) ──
+        try:
+            if self._mode == self.Mode.PARKING:
+                fsm_txt = f"FSM:{self.parking.state.name}"
+            else:
+                fsm_txt = f"FSM:{self.fsm.state.name}"
+        except Exception:
+            fsm_txt = ""
         cv2.putText(vis, f"{mode_label}  {fsm_txt}  duty:{self.motor.current_duty:+.0f}%",
                     (8, CAMERA_H - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2, cv2.LINE_AA)
@@ -751,6 +836,7 @@ class VehicleTMR:
         if _DISPLAY:
             cv2.destroyAllWindows()
         self.fsm.deactivate()
+        self.parking.deactivate()
         self.motor.brake()
         time.sleep(0.1)
         self.sensor.stop()

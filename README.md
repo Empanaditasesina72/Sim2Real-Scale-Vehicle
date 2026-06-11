@@ -52,9 +52,9 @@ carro físico — eso es **Sim2Real**.
 | Capacidad | Estado | Módulo |
 |---|---|---|
 | Seguimiento de carril (PID) | ✅ Producción | `vision/lane_pipeline.py` + `control/pid_controller.py` |
-| Detección de señal ALTO (YOLO) | ✅ Producción | `vision/sign_detector.py` |
+| Detección de señales (YOLO + color) | ✅ Producción | `vision/sign_detector.py` — 7 clases; solo **ALTO/rojo** frenan |
 | FSM de conducción (5 estados) | ✅ Producción | `control/fsm.py` |
-| Estacionamiento en batería | ✅ Producción | `control/parking_fsm.py` |
+| Estacionamiento en batería | ✅ Producción (Pi **y** sim, botón **Y**) | `control/parking_fsm.py` |
 | Señales direccionales + freno | ✅ Producción | `hardware/signals.py`, `hardware/brake_light.py` |
 | Gemelo digital Unity (Sim2Real) | ✅ Validado 100/100 | `main_simulator.py` + repo [TMR2026_Sim](https://github.com/Empanaditasesina72/TMR2026_Sim-2026-05-24_20-19-01) |
 | Rebase / cruce peatonal / NPU on-chip | 🧪 Disponible (no integrado) | `autonomy/`, `hardware/camera_manager.py` |
@@ -93,7 +93,7 @@ maneja → detecta ALTO → frena → espera 5 s → reanuda → avanza → **se
 | | | **🟢 100/100 — APROBADO** |
 
 > El runner `run_validation.py` genera los CSV, las gráficas (`matplotlib`) y un tablero de puntos
-> `PUNTAJE.txt`. Ver detalles en [`TMR2026/ENTREGA_PROFESOR.md`](TMR2026/ENTREGA_PROFESOR.md).
+> `SCOREBOARD.txt`. Ver detalles en [`TMR2026/docs/ENTREGA_PROFESOR.md`](TMR2026/docs/ENTREGA_PROFESOR.md).
 
 ---
 
@@ -156,7 +156,7 @@ de visión nunca se congela.
 ```mermaid
 stateDiagram-v2
     [*] --> CRUCERO : activate()
-    CRUCERO --> PRECAUCION : ALTO visible (cooldown ok)
+    CRUCERO --> PRECAUCION : ALTO o semáforo ROJO visible (cooldown ok)
     PRECAUCION --> CRUCERO : la señal desaparece
     PRECAUCION --> FRENADO : dist ≤ 300 mm (cámara o ToF)
     FRENADO --> ESPERA : motor = 0 (freno duro)
@@ -167,10 +167,14 @@ stateDiagram-v2
 | Estado | Qué hace | Luces |
 |---|---|---|
 | **CRUCERO** | Sigue el carril con PID | Direccional según ángulo |
-| **PRECAUCION** | Detectó ALTO, reduce velocidad | Intermitentes (hazard) |
+| **PRECAUCION** | Detectó ALTO/rojo, reduce velocidad | Intermitentes (hazard) |
 | **FRENADO** | `motor.brake()` — corte duro a 0 | Hazard + freno |
 | **ESPERA** | Parado 5 s (regla TMR) | Hazard + freno |
 | **REANUDAR** | Rampa de aceleración + cooldown 3 s | Direccional |
+
+> 🚦 **Solo ALTO y semáforo en ROJO frenan al carro.** Verde, amarillo y las flechas se detectan
+> y se reportan en telemetría, pero no interrumpen la marcha — la misma lógica exacta en el
+> simulador y en el Pi (paridad Sim2Real).
 
 ### Estacionamiento en batería (`control/parking_fsm.py`)
 
@@ -330,11 +334,12 @@ GPIO accedido vía **`lgpio`** (chip 4 en Pi 5) con respaldo a `RPi.GPIO`.
 Carrito/
 ├── README.md                  ← este archivo
 ├── main.py                    ← loader (chdir a TMR2026/ y ejecuta)
+├── docs/                      ← diagrama de arquitectura (PNG/PDF) + generador
 │
 └── TMR2026/                   ★ sistema activo
-    ├── main.py                ← producción (Raspberry Pi)
+    ├── main.py                ← producción (Raspberry Pi) — 5 modos
     ├── main_simulator.py      ← gemelo digital (Unity / Sim2Real)
-    ├── config.py              ← TODOS los parámetros
+    ├── config.py              ← TODOS los parámetros (única fuente de verdad)
     │
     ├── hardware/
     │   ├── motor.py           ← IBT-2 con soft-start (ACTIVO)
@@ -346,12 +351,15 @@ Carrito/
     ├── vision/
     │   ├── camera_stream.py   ← Picamera2 · RGB→BGR
     │   ├── lane_pipeline.py   ← carril: BEV + sliding windows + EMA  (ACTIVO)
-    │   └── sign_detector.py   ← YOLOv8n CPU (tmr_signs.pt)           (ACTIVO)
+    │   └── sign_detector.py   ← YOLOv8n + respaldo por color          (ACTIVO)
     │
     ├── control/
     │   ├── fsm.py             ← FSM de conducción (5 estados)
-    │   ├── parking_fsm.py     ← estacionamiento en batería
+    │   ├── parking_fsm.py     ← estacionamiento en batería (Pi + sim)
     │   └── pid_controller.py  ← PID anti-windup
+    │
+    ├── docs/                  ← SETUP, protocolo Sim2Real, calibración, entregas
+    ├── tests/                 ← pytest: FSM, señales, histéresis YOLO
     │
     ├── sim_hardware_mocks.py  ← mocks por socket (cámara/motor/servo/ToF)
     ├── validation_logger.py   ← CSV + tablero de puntos Sim2Real
@@ -418,7 +426,7 @@ journalctl -u carrito_tmr -f   # logs en vivo
 ```
 </details>
 
-Más detalle en [`TMR2026/SETUP.md`](TMR2026/SETUP.md).
+Más detalle en [`TMR2026/docs/SETUP.md`](TMR2026/docs/SETUP.md).
 
 ---
 
@@ -440,20 +448,28 @@ python run_validation.py       # 3 pruebas Sim2Real + gráficas + puntaje
 python main_simulator.py --display   # solo ver en vivo
 ```
 
+```bash
+# Tests unitarios (PC o Pi — sin hardware, sin Unity)
+pytest TMR2026/tests -v
+```
+
 ---
 
 ## 🎮 Controles del mando
 
 | Botón | Acción |
 |---|---|
-| **A** | Modo **MANUAL** |
-| **B** | Modo **VISION** (cámara ON, motores OFF) |
-| **X** | Modo **AUTONOMOUS** |
-| **Start** | **Paro de emergencia** (freeze) |
+| **A / Cruz** | Modo **MANUAL** |
+| **B / Círculo** | Modo **VISION** (cámara ON, motores OFF) |
+| **X / Cuadrado** | Modo **AUTONOMOUS** (toggle) |
+| **Y / Triángulo** | Modo **PARKING** — estacionamiento en batería (toggle) |
+| **Start** | **Paro de emergencia** (freno + MANUAL) |
 | Palanca izq. X | Dirección (MANUAL) |
 | Gatillos R2 / L2 | Acelerador / reversa (MANUAL) |
 
 > El mando es **hot-plug**: si el PS4 emparejado se enciende después del arranque, se reconecta solo.
+> Sin mando también hay **teclado** (en terminal): `A`=manual · `B`=visión · `X`=autónomo ·
+> `P`=parking · `Espacio`=emergencia · `S`=standby · `Q`=salir.
 
 ---
 

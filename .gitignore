@@ -1,7 +1,27 @@
+# ── Python ────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
 
-# Resultados de validación Sim2Real (se regeneran en cada corrida con Unity).
-# No se versionan: contienen datos de la última ejecución local.
+# ── IDEs / SO ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Configuración local de Claude Code (personal, no se versiona) ────────
+.claude/settings.local.json
+
+# ── Resultados de validación Sim2Real ────────────────────────────────────
+# Se regeneran en cada corrida con Unity; contienen datos de la última
+# ejecución local y no deben versionarse.
 TMR2026/validation_results/
 TMR2026/validation_results_parking/
+
+# ── Logs y artefactos de entrenamiento ───────────────────────────────────
+TMR2026/logs/
+runs/

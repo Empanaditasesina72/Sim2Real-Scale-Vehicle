@@ -70,7 +70,8 @@ def main():
           os.path.join(DEST, "01_results_3_tests"), "01_results_3_tests/")
 
     print(">>> Copying documents...")
-    _copy(HERE, DOC_FILES, os.path.join(DEST, "02_documents"), "02_documents/")
+    _copy(os.path.join(HERE, "docs"), DOC_FILES,
+          os.path.join(DEST, "02_documents"), "02_documents/")
 
     # README (English)
     with open(os.path.join(DEST, "README.txt"), "w", encoding="utf-8") as f:

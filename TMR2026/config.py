@@ -226,10 +226,12 @@ OVERTAKE_STEER_DEG   = 20.0 # grados desde centro para el giro de rebase
 #   B / Círculo   (btn 1) → Visión Test (cámara, motores OFF)
 #   X / Cuadrado  (btn 2) → Autónomo (carril + STOP + crucero)
 #   Y / Triángulo (btn 3) → Estacionamiento
+#   Start/Options (btn 9) → Emergencia (freno + MANUAL)
 BTN_MANUAL     = 0
 BTN_VISION     = 1
 BTN_AUTONOMOUS = 2
 BTN_PARKING    = 3
+BTN_EMERGENCY  = 9
 
 # Mantener alias para compatibilidad
 BTN_BACK_TO_MANUAL = BTN_MANUAL

@@ -127,7 +127,7 @@ def test_connection():
         print("\nNext steps:")
         print("  1. Run vision debug:   python main_simulator.py --display")
         print("  2. Run autonomous:     python main_simulator.py")
-        print("  3. Run validation:     See PHASE1_VALIDATION.md")
+        print("  3. Run validation:     See docs/PHASE1_VALIDATION.md")
         
         return True
         

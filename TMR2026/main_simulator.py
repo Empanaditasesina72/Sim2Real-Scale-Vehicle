@@ -66,14 +66,19 @@ for _i, _a in enumerate(sys.argv):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONSTANTES COMPORTAMIENTO
+# Límites del servo desde config.py: el gemelo digital usa EXACTAMENTE la
+# misma autoridad de dirección que el servo físico (58°–122°) — Sim2Real.
 # ─────────────────────────────────────────────────────────────────────────────
+from config import (
+    SERVO_CENTER_ANGLE as SERVO_CENTER,
+    SERVO_MIN_ANGLE    as SERVO_MIN,
+    SERVO_MAX_ANGLE    as SERVO_MAX,
+)
+
 LOOP_HZ           = 50      # Hz del bucle de control principal
 CAMERA_W          = 640
 CAMERA_H          = 480
 CAMERA_FPS        = 30
-SERVO_CENTER      = 90.0    # grados
-SERVO_MIN         = 45.0    # límite físico izquierda
-SERVO_MAX         = 135.0   # límite físico derecha
 PID_KP            = 0.08
 PID_KI            = 0.002
 PID_KD            = 0.025
@@ -92,17 +97,12 @@ from vision.lane_pipeline import LanePipeline, LaneResult
 from vision.sign_detector import SignDetector
 from control.pid_controller import PIDController
 from control.fsm import AutonomousFSM, FSMState
-from control.parking_fsm import ParkingFSM, ParkingState
+from control.parking_fsm import ParkingFSM
 from validation_logger import ValidationLogger
 
 # Placeholder para mocks de GPIO (no-op en PC)
 class NoOpSignals:
     """Mock de TurnSignals para PC."""
-    class SignalMode:
-        OFF = 0
-        LEFT = 1
-        RIGHT = 2
-        HAZARD = 3
 
     def __init__(self, *args, **kwargs):
         pass

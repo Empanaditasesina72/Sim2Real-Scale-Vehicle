@@ -3,7 +3,8 @@
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import os
 
-os.chdir(r'C:\Users\Angel\Documents\GitHub\Carrito')
+# Generar las imágenes junto a este script (docs/), sin rutas absolutas.
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 S = 3
 W, H = 1560, 1230

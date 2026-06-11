@@ -78,7 +78,7 @@ def main():
     print("    • fig1_latency.png  fig2_braking.png  fig3_fsm.png (figuras EN)")
     print("    • SCOREBOARD.txt     (tablero de puntos, inglés)")
     print("\n  Arma la entrega en inglés:  python armar_entrega.py")
-    print("  (mapa de requisitos: DELIVERY_PROFESSOR.md)")
+    print("  (mapa de requisitos: docs/DELIVERY_PROFESSOR.md)")
 
 
 if __name__ == "__main__":

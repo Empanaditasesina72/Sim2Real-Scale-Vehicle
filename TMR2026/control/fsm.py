@@ -44,6 +44,18 @@ try:
 except ImportError:
     _CFG_LANE_MIN_CONF = 0.20
 
+# Límites del servo desde config.py — la MISMA autoridad de dirección en el
+# Pi y en el simulador (Sim2Real). El driver físico clava 58°–122°; si la FSM
+# permitiera más, el gemelo digital validaría giros que el coche no puede dar.
+try:
+    from config import (
+        SERVO_CENTER_ANGLE as _CFG_SERVO_CENTER,
+        SERVO_MIN_ANGLE    as _CFG_SERVO_MIN,
+        SERVO_MAX_ANGLE    as _CFG_SERVO_MAX,
+    )
+except ImportError:
+    _CFG_SERVO_CENTER, _CFG_SERVO_MIN, _CFG_SERVO_MAX = 90.0, 58.0, 122.0
+
 
 class FSMState(Enum):
     CRUCERO    = auto()   # Avance normal, PID de dirección
@@ -84,10 +96,10 @@ class AutonomousFSM:
     COOLDOWN_S      = 3.0     # segundos tras REANUDAR en que se ignoran señales
     MIN_LANE_CONF   = _CFG_LANE_MIN_CONF  # confianza mínima carril (config.py: 0.20)
 
-    # ── Ángulo servo ─────────────────────────────────────────────────────────
-    SERVO_CENTER    = 90.0
-    SERVO_MIN       = 45.0
-    SERVO_MAX       = 135.0
+    # ── Ángulo servo (de config.py — paridad sim ↔ Pi) ───────────────────────
+    SERVO_CENTER    = _CFG_SERVO_CENTER
+    SERVO_MIN       = _CFG_SERVO_MIN
+    SERVO_MAX       = _CFG_SERVO_MAX
 
     # Umbral en grados desde el centro para activar direccional en CRUCERO/REANUDAR.
     # < SIGNAL_DIR_THRESH_DEG → off (ruedas casi rectas, no vale la pena parpadear).

@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Active system: TMR2026/
 
-Everything under `TMR2026/` is the current vehicle. Legacy prototypes live in `_legacy/` and must not be imported from TMR2026.
+Everything under `TMR2026/` is the current vehicle. Legacy prototypes live in `_legacy/` and must not be imported from TMR2026. Project-wide docs (architecture diagram + generator) live in `docs/`; TMR2026-specific docs (SETUP, Sim2Real protocol, calibration, professor deliveries) live in `TMR2026/docs/`.
+
+**`config.py` is the single source of truth** for GPIO pins, servo angles/limits, PID gains, speeds and gamepad button mapping. `main.py`, `main_simulator.py` and `control/fsm.py` import these values — never re-hardcode them per file.
 
 **Root `main.py` is a loader** — it `chdir`s into `TMR2026/` and runs `TMR2026/main.py` with `runpy` so imports like `from hardware.motor import MotorDriver` keep working. The systemd service (`TMR2026/systemd/carrito_tmr.service`) points directly to `TMR2026/main.py --display` and starts under `graphical.target` (i.e. after the desktop is ready), with `DISPLAY=:0` and `XAUTHORITY=/home/angel01/.Xauthority` exported, so OpenCV can open a window on the HDMI monitor when VISION/AUTONOMOUS mode is entered. Root `main.py` is only for manual execution.
 
@@ -13,9 +15,9 @@ Everything under `TMR2026/` is the current vehicle. Legacy prototypes live in `_
 Raspberry Pi 5 with:
 - Sony IMX500 NPU camera via `Picamera2` (RGB888 → BGR via `cv2.cvtColor(RGB2BGR)` — must preserve)
 - IBT-2 H-bridge motor: BCM 18 (RPWM) + 13 (LPWM), `R_EN`/`L_EN` tied to 3.3 V
-- PCA9685 servo on I²C bus 3 (dtoverlay GPIO 0/1), channel 0
+- PCA9685 servo on I²C bus 3 (dtoverlay GPIO 0/1), channel `config.py:SERVO_CHANNEL` (15, verified on the Pi)
 - 2× VL53L0X ToF on I²C bus 4 (dtoverlay GPIO 23/22), addresses 0x30 (front) / 0x29 (rear), XSHUT pin `TMR2026/config.py:PIN_TOF_XSHUT_FRONT`
-- Gamepad via `pygame` (PS4/Xbox) — buttons: A=MANUAL, B=VISION, X=AUTONOMOUS, Start=EMERGENCY. Hot-plug supported: `main.py:_pump_gamepad_events()` runs every loop iteration and reacts to SDL2 `JOYDEVICEADDED` / `JOYDEVICEREMOVED` events, so the PS4 (paired+trusted as `A0:5A:5F:0B:F7:5A`) connects automatically when powered on, even if the system booted without it. BlueZ has `AutoEnable=true` in `/etc/bluetooth/main.conf` so the BT controller comes up at boot ready to accept the trusted device.
+- Gamepad via `pygame` (PS4/Xbox) — buttons: A=MANUAL, B=VISION, X=AUTONOMOUS, Y=PARKING, Start=EMERGENCY (mapping in `config.py:BTN_*`). Hot-plug supported: `main.py:_pump_gamepad_events()` runs every loop iteration and reacts to SDL2 `JOYDEVICEADDED` / `JOYDEVICEREMOVED` events, so the PS4 (paired+trusted as `A0:5A:5F:0B:F7:5A`) connects automatically when powered on, even if the system booted without it. BlueZ has `AutoEnable=true` in `/etc/bluetooth/main.conf` so the BT controller comes up at boot ready to accept the trusted device.
 - GPIO LEDs for turn signals / hazards / brake — pins defined in `TMR2026/vision_config.yaml` → `gpio:` and mirrored in `config.py`
 
 GPIO is accessed via `lgpio` (chip 4 on Pi 5) with a `RPi.GPIO` fallback.
@@ -31,7 +33,7 @@ python main.py --display     # with debug window
 python TMR2026/main.py
 ```
 
-Runtime modes (cycled via gamepad): `STANDBY → MANUAL → VISION → AUTONOMOUS`. `Start` button = emergency freeze.
+Runtime modes (selected via gamepad/keyboard): `STANDBY · MANUAL · VISION · AUTONOMOUS · PARKING`. `Start` button = emergency freeze (brake + MANUAL). Keyboard mirror when stdin is a TTY: `A/B/X/P/Space/S/Q`.
 
 ## Installing Dependencies
 
@@ -41,7 +43,7 @@ pip install -r TMR2026/requirements.txt
 pip install picamera2 lgpio adafruit-circuitpython-vl53l0x adafruit-circuitpython-pca9685 ultralytics
 ```
 
-See `TMR2026/SETUP.md` for dtoverlay config and udev rules.
+See `TMR2026/docs/SETUP.md` for dtoverlay config and udev rules.
 
 ## Architecture (TMR2026/)
 
@@ -54,18 +56,21 @@ See `TMR2026/SETUP.md` for dtoverlay config and udev rules.
 
 ### Perception → decision → actuation
 - `vision/lane_pipeline.py` — BEV + HSV-white + sliding windows + EMA; emits `LaneResult(error_px, confidence)`
-- `vision/sign_detector.py` — non-blocking queue of `Detection(label, confidence, bbox)`; only `stop_sign` and `crosswalk` labels are surfaced
-- `control/fsm.py` — 5-state FSM: `CRUCERO → PRECAUCION → FRENADO → ESPERA → REANUDAR`. Stop wait uses `time.monotonic()`, never `sleep()`. `brake()` is instantaneous and must not be wrapped/changed
+- `vision/sign_detector.py` — non-blocking queue of `Detection(label, confidence, bbox, distance_m)`; surfaces the 7 model classes (`stop`→`stop_sign`, `red`, `green`, `yellow`, `left`, `right`, `straight`) with 3-frame hysteresis, plus a red/purple color-blob STOP fallback when YOLO misses. Distance is estimated per class via pinhole.
+- **Brake gating lives in `main.py:_update_vision` / `main_simulator.py:_update_vision`**: only `stop_sign` and `red` set `fsm.sign_visible` (`stop_like`). Green/arrows/yellow must NEVER brake the car — that bug (using `has_any_sign()`) is what made the physical car stop at green lights. Keep both files' gating identical (Sim2Real parity).
+- `control/fsm.py` — 5-state FSM: `CRUCERO → PRECAUCION → FRENADO → ESPERA → REANUDAR`. Stop wait uses `time.monotonic()`, never `sleep()`. `brake()` is instantaneous and must not be wrapped/changed. Servo limits come from `config.py` (58°–122°) so sim and Pi share the same steering authority.
+- `control/parking_fsm.py` — battery/perpendicular parking sub-FSM (`PARKING_SEARCH → PARKING_MANEUVER → PARKED`), hardware-agnostic; wired to the Y/Triángulo button in `main.py` and to the `--parking` sequence in `main_simulator.py`.
 - `control/pid_controller.py` — generic PID with anti-windup and derivative-on-measurement, used for steering (lane error → servo angle)
 
 ### Vehicle lighting (signals + brake)
-Three GPIO LEDs driven via `lgpio` chip 4 (BCM 19 left, 20 right, 16 brake — see `config.py`):
+Three GPIO LEDs driven via `lgpio` chip 4 (BCM 17 left, 5 right, 6 brake — see `config.py:PIN_LED_*`):
 - `hardware/signals.py` — `TurnSignals` with modes `OFF / LEFT / RIGHT / HAZARD`. Blink at 2 Hz (TMR regulation) is computed each frame from `time.monotonic()`; no thread, no sleep. Caller must invoke `signals.tick()` every loop iteration.
 - `hardware/brake_light.py` — simple `on()` / `off()` (idempotent — only writes GPIO on state change).
-- `control/fsm.py:_apply_lights()` runs every tick (not just on transitions). In `CRUCERO`/`REANUDAR` it reads `steering.current_angle` vs `SERVO_CENTER`; deviation beyond `SIGNAL_DIR_THRESH_DEG` (6°) sets `LEFT` or `RIGHT`. In `PRECAUCION`/`FRENADO`/`ESPERA` it forces `HAZARD` and `brake_light.on()`. Anywhere else → all OFF.
+- `control/fsm.py:_apply_lights()` runs every tick (not just on transitions). In `CRUCERO`/`REANUDAR` it reads `steering.current_angle` vs `SERVO_CENTER`; deviation beyond `SIGNAL_DIR_THRESH_DEG` (12°) sets `LEFT` or `RIGHT`. In `PRECAUCION`/`FRENADO`/`ESPERA` it forces `HAZARD` and `brake_light.on()`. Anywhere else → all OFF.
 - `main.py` mirrors this for non-FSM modes:
   - `_do_standby` / `_do_vision` → all signals OFF, brake OFF.
-  - `_do_manual` → joystick `steer_raw < -0.15` → LEFT, `> +0.15` → RIGHT, else OFF. `brake_light.on()` when `motor.current_duty < -1.0` (reversing).
+  - `_do_manual` → joystick `steer_raw < -0.30` → LEFT, `> +0.30` → RIGHT, else OFF. `brake_light.on()` when `motor.current_duty < -1.0` (reversing).
+  - `_do_parking` → HAZARD during the whole maneuver; `brake_light.on()` once `PARKED`.
   - `signals.tick()` is called once per frame in the main loop, after `_run_mode()`, so blink is always advanced regardless of mode.
 
 ### Steering inversion
@@ -82,10 +87,11 @@ The servo is mounted reversed on this chassis. `config.py:STEERING_INVERTED = Tr
 - `PIDController` exposes the last computed components via public attrs `last_error / last_p / last_i / last_d / last_output`. Read-only — they are written every `compute()` and reset by `reset()`. Used by both the on-screen overlay and console logs.
 
 ### Debug display (`--display` flag)
-When `python main.py --display` is set, the system opens a single OpenCV window `TMR 2026 - Vision Debug` whenever the mode is **VISION** *or* **AUTONOMOUS**. The window is closed automatically when leaving those modes for STANDBY/MANUAL.
-- Renderer lives in `main.py:_render_debug_view(mode_label)` and is shared by both modes — do not duplicate it per mode.
+When `python main.py --display` is set, the system opens a single OpenCV window `TMR 2026 - Vision Debug` whenever the mode is in `DISPLAY_MODES` (**VISION**, **AUTONOMOUS** or **PARKING**). The window is closed automatically when leaving those modes for STANDBY/MANUAL.
+- Renderer lives in `main.py:_render_debug_view(mode_label)` and is shared by all display modes — do not duplicate it per mode.
 - Layout: top half = BEV (left) + HSV white mask (right), bottom half = annotated frame with lane center line + YOLO bboxes.
-- Two side-by-side overlay panels at y≈200: left = PID telemetry (`err`, `P/I/D`, `corr`, target servo angle, lidar); right = `OBJETOS DETECTADOS` list with up to 5 sign labels + confidence + distance.
+- Two side-by-side overlay panels at y≈200: left = PID telemetry (`err`, `P/I/D`, `corr`, target servo angle, lidar); right = `OBJETOS DETECTADOS` list with up to 4 sign labels + confidence + distance, plus the action line (`-> ALTO total (5 s)`, etc.) from `SIGN_ACTIONS`.
+- The bottom status bar shows the driving FSM state, or the ParkingFSM state when mode is PARKING.
 - VISION mode brakes motors and centers steering, then *simulates* the PID purely for the overlay (servo never moves). `_set_mode` calls `pid.reset()` on entry/exit of VISION so the integrator does not contaminate AUTONOMOUS afterward.
 - AUTONOMOUS mode does its normal work (FSM updates servo + motor) and additionally calls `_render_debug_view(mode_label="AUT")` after `_log_autonomous()`.
 
@@ -109,7 +115,7 @@ These are full implementations kept for future wiring. Treat as library code:
 
 ## YOLO Models
 
-- `TMR2026/weights/tmr_signs.pt` — active model loaded by `SignDetector`. Trained from `yolov8n.pt` on `traffic_lights/data.yaml` (7 classes: `green, left, red, right, stop, straight, yellow`). Only `stop` is currently surfaced by the filter in `sign_detector.py`.
+- `TMR2026/weights/tmr_signs.pt` — active model loaded by `SignDetector` at `conf=0.55` (same as the validated simulator — 0.15 caused phantom detections that made the FSM brake randomly). All 7 classes are surfaced (`green, left, red, right, stop, straight, yellow`), but only `stop`/`red` gate the FSM (see brake gating above).
 - `_legacy/runs/detect/train2/weights/` — source of the active model (checkpoint + training artifacts).
 - `_legacy/runs/detect/train/weights/best.pt` — larger variant (~18 MB) kept as backup.
 - `traffic_lights/` — Roboflow v9 dataset (1470 close-up sign images, no track photos). Use to re-train if adding a `crosswalk` class.
@@ -132,9 +138,8 @@ These are full implementations kept for future wiring. Treat as library code:
 
 ## Known inconsistencies
 
-- `TMR2026/main.py:46` hardcodes `SERVO_CHANNEL=0` but `config.py:SERVO_CHANNEL=15`. `main.py` wins at runtime because it doesn't import `SERVO_CHANNEL` from config.
-- `TMR2026/main.py:51` hardcodes `TOF_XSHUT_PIN=17`. If new GPIO LEDs reuse pin 17 the ToF bring-up will fight them — keep LED pins off 17.
-- LED pins (BCM 19/20/16) and `vision_config.yaml` `gpio:` block (BCM 5/6 hazard, 19/20 turns) overlap on 19/20. Production main.py uses 19/20 for turn signals; `vision_module.py` reads its own pins from the YAML — they live in separate processes so there's no live conflict, but don't run both at once.
+- LED pins in `config.py` (`PIN_LED_TURN_LEFT=17`, `PIN_LED_TURN_RIGHT=5`, `PIN_LED_BRAKE=6`) and `vision_config.yaml` `gpio:` block belong to two separate programs: production `main.py` reads `config.py`; `vision_module.py` reads the YAML. They live in separate processes so there's no live conflict, but don't run both at once.
+- `TMR2026/main.py` no longer hardcodes hardware constants — pins, servo angles and button mapping are imported from `config.py` (single source of truth). The PCA9685 servo channel (15) and ToF XSHUT pins are read by the drivers directly from `config.py`.
 
 ## Common Pi-side gotchas
 

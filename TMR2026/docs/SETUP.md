@@ -115,24 +115,28 @@ while True:
 
 ```
 TMR2026/
-├── main.py                   ← Punto de entrada + FSM principal
+├── main.py                   ← Punto de entrada (Raspberry Pi, bucle 50 Hz)
+├── main_simulator.py         ← Gemelo digital (Unity / Sim2Real)
 ├── config.py                 ← TODOS los parámetros
 ├── requirements.txt
-├── SETUP.md
+├── docs/                     ← SETUP, Sim2Real, calibración, entregas
 ├── hardware/
-│   ├── motor_driver.py       ← IBT-2 (EN=24, RPWM=18, LPWM=13)
+│   ├── motor.py              ← IBT-2 soft-start (ACTIVO; RPWM=18, LPWM=13)
 │   ├── steering_driver.py    ← PCA9685 + MG90s + geometría Ackermann
 │   ├── distance_sensor.py    ← VL53L0X hilo dedicado
-│   └── camera_manager.py     ← Picamera2 + IMX500 NPU
+│   ├── signals.py            ← Direccionales / hazard (2 Hz)
+│   └── brake_light.py        ← Luz de freno
 ├── control/
-│   ├── gamepad_reader.py     ← Mando BT hilo dedicado
+│   ├── fsm.py                ← FSM de conducción (5 estados)
+│   ├── parking_fsm.py        ← Estacionamiento en batería
 │   └── pid_controller.py     ← PID genérico con anti-windup
 ├── vision/
-│   ├── lane_detector.py      ← OpenCV: error de carril + curvatura
-│   └── object_detector.py    ← Parseo de detecciones NPU + semáforos
-├── autonomy/
-│   ├── autonomous_mode.py    ← FSM autónoma + STOP + velocidad
-│   └── parking_maneuver.py   ← Sub-FSM estacionamiento en batería
+│   ├── camera_stream.py      ← Picamera2 RGB→BGR (hilo)
+│   ├── lane_pipeline.py      ← BEV + HSV + sliding windows (ACTIVO)
+│   └── sign_detector.py      ← YOLOv8n + respaldo por color (ACTIVO)
+├── autonomy/                 ← Implementaciones alternativas (no conectadas)
+├── tests/                    ← pytest (FSM, señales, histéresis)
+├── tools/                    ← test_camera.py, captura, evaluación YOLO
 └── systemd/
     └── carrito_tmr.service   ← Auto-arranque en boot
 ```

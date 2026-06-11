@@ -79,12 +79,13 @@ def test_hysteresis_keeps_largest_bbox_per_frame():
 def test_bbox_distance_matches_pinhole_formula():
     """distance_m = (real_height × focal) / height_px."""
     # Simular _parse_results manualmente (sin Ultralytics).
-    # Un bbox de 50 px de alto para stop_sign (alto real 0.18 m, focal 490 px):
-    #   dist = (0.18 * 490) / 50 = 1.764 m
+    # La altura real de la señal viene de config.py (calibración vigente:
+    # octágono de 4 cm → con focal 490 px y bbox de 50 px ≈ 0.392 m).
     height_px = 50
     expected  = (STOP_SIGN_REAL_HEIGHT_M * CAMERA_FOCAL_LENGTH_PX) / height_px
 
     det = Detection("stop_sign", 0.9, 0, 0, 80, height_px,
                     distance_m=expected)
-    assert abs(det.distance_m - 1.764) < 0.01
+    by_hand = STOP_SIGN_REAL_HEIGHT_M * CAMERA_FOCAL_LENGTH_PX / 50.0
+    assert abs(det.distance_m - by_hand) < 0.01
     assert det.height_px == 50

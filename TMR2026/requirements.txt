@@ -23,6 +23,10 @@ adafruit-circuitpython-pca9685
 adafruit-circuitpython-motor
 adafruit-circuitpython-vl53l0x
 adafruit-blinka
+adafruit-extended-bus      # ExtendedI2C — buses /dev/i2c-3 y /dev/i2c-4
+
+# GPIO Pi 5 (chip 4) — backend principal; RPi.GPIO es el fallback
+lgpio
 
 # Visión
 opencv-python-headless>=4.8
@@ -30,8 +34,13 @@ opencv-python-headless>=4.8
 # Numpy (normalmente preinstalado)
 numpy>=1.24
 
-# --- Solo PC / Sim2Real (validación del PDF, NO necesario en el Pi) ---
+# Detección de señales YOLOv8 (weights/tmr_signs.pt).
+# Si no está instalado, SignDetector degrada al detector por color.
+ultralytics>=8.0
+
+# --- Solo PC / Sim2Real (validación, NO necesario en el Pi) ---
 # matplotlib: gráficas del artículo (analyze_results.py)
 matplotlib>=3.7
-# ultralytics: YOLO para detección de señales en el simulador
-# ultralytics>=8.0   # (descomenta si quieres YOLO; el detector por color ya funciona)
+
+# --- Desarrollo (tests) ---
+pytest>=7.0
