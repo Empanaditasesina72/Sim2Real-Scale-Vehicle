@@ -1,18 +1,17 @@
-"""
-test_camera.py — Preview combinado cámara + lane pipeline + PID + YOLO.
+"""Combined camera + lane pipeline + PID + YOLO preview.
 
-Replica lo que computa el modo AUTONOMOUS pero NO toca motores ni servo.
-Útil para:
-  • Comprobar que la cámara ve la pista y los blancos se aíslan bien.
-  • Calibrar BEV_SRC_RATIO sin riesgo (no se inicializa hardware de tracción).
-  • Ver cómo responde el PID (P / I / D / corrección) a las ganancias actuales.
-  • Verificar detecciones de YOLO en vivo.
+Replicates what AUTONOMOUS mode computes but does NOT touch motors or servo.
+Useful for:
+  - Checking that the camera sees the track and white lines are isolated well.
+  - Calibrating BEV_SRC_RATIO safely (no traction hardware is initialized).
+  - Seeing how the PID responds (P / I / D / correction) to the current gains.
+  - Verifying YOLO detections live.
 
-Uso (desde TMR2026/):
-  python3 tools/test_camera.py            # con YOLO
-  python3 tools/test_camera.py --no-yolo  # solo lane + PID (más rápido al iniciar)
+Usage (from TMR2026/):
+  python3 tools/test_camera.py            # with YOLO
+  python3 tools/test_camera.py --no-yolo  # lane + PID only (faster startup)
 
-Salir: tecla 'q' o ESC en la ventana.
+Quit: 'q' or ESC in the window.
 """
 
 from __future__ import annotations
@@ -46,7 +45,7 @@ USE_YOLO = "--no-yolo" not in sys.argv
 
 
 def _draw_panel(img, x, y, w, h, lines):
-    """Caja semitransparente con borde + texto multi-línea (igual que main.py)."""
+    """Semi-transparent box with border + multi-line text (same as main.py)."""
     ov = img.copy()
     cv2.rectangle(ov, (x, y), (x + w, y + h), (0, 0, 0), -1)
     cv2.addWeighted(ov, 0.55, img, 0.45, 0, dst=img)
@@ -58,7 +57,7 @@ def _draw_panel(img, x, y, w, h, lines):
 
 
 def draw_overlay(frame, lane_pipe, lane, pid, angle_target, fps, dets):
-    """Replica _render_debug_view de main.py (sin motor/FSM/lidar reales)."""
+    """Replicates _render_debug_view from main.py (no real motor/FSM/lidar)."""
     H, W = frame.shape[:2]
 
     vis = lane_pipe.draw_debug(frame, lane)
@@ -66,13 +65,13 @@ def draw_overlay(frame, lane_pipe, lane, pid, angle_target, fps, dets):
     if lane.bev_frame is not None and lane.mask_frame is not None:
         vis[0:180, 0:320]   = cv2.resize(lane.bev_frame,  (320, 180))
         vis[0:180, 320:640] = cv2.resize(lane.mask_frame, (320, 180))
-        cv2.putText(vis, "BEV (ojo de aguila)", (8, 14),
+        cv2.putText(vis, "BEV (bird's-eye)", (8, 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
-        cv2.putText(vis, "Mascara HSV blanco",   (328, 14),
+        cv2.putText(vis, "HSV white mask",   (328, 14),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
     _draw_panel(vis, 8, 200, 320, 160, lines=[
-        f"MODO  : TEST",
+        f"MODE  : TEST",
         f"err   :{lane.error_px:+7.1f}px  conf:{lane.confidence:.0%}",
         f"P     :{pid.last_p:+7.2f}   kp={pid.kp:.3f}",
         f"I     :{pid.last_i:+7.2f}   ki={pid.ki:.3f}",
@@ -82,18 +81,18 @@ def draw_overlay(frame, lane_pipe, lane, pid, angle_target, fps, dets):
     ])
 
     if dets:
-        obj_lines = ["OBJETOS DETECTADOS:"]
+        obj_lines = ["DETECTED OBJECTS:"]
         for d in dets[:5]:
             dist = f" @{(d.distance_m or 0)*100:.0f}cm" if d.distance_m else ""
             obj_lines.append(f"- {d.label}  {d.confidence:.0%}{dist}")
     else:
         obj_lines = [
-            "OBJETOS DETECTADOS:",
-            "- (ninguno)" if USE_YOLO else "- YOLO OFF (--no-yolo)",
+            "DETECTED OBJECTS:",
+            "- (none)" if USE_YOLO else "- YOLO OFF (--no-yolo)",
         ]
     _draw_panel(vis, 336, 200, 296, 160, lines=obj_lines)
 
-    cv2.putText(vis, f"TEST  duty:  0%   ('q'/ESC salir)",
+    cv2.putText(vis, f"TEST  duty:  0%   ('q'/ESC quit)",
                 (8, H - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2, cv2.LINE_AA)
 
@@ -112,9 +111,9 @@ def draw_overlay(frame, lane_pipe, lane, pid, angle_target, fps, dets):
 
 
 def main():
-    print("[TEST] Iniciando preview cámara + lane + PID (SIN motores)")
+    print("[TEST] Starting camera + lane + PID preview (NO motors)")
     if not USE_YOLO:
-        print("[TEST] YOLO deshabilitado por flag --no-yolo")
+        print("[TEST] YOLO disabled by --no-yolo flag")
 
     cam = CameraStream(width=CAMERA_W, height=CAMERA_H, fps=CAMERA_FPS)
     cam.start()
@@ -174,7 +173,7 @@ def main():
 
             sign_txt = (
                 ", ".join(f"{d.label}({d.confidence:.0%})" for d in dets)
-                or "—"
+                or "-"
             )
             print(
                 f"\r[TEST] err:{lane.error_px:+6.1f}px conf:{lane.confidence:.0%}  "
@@ -188,7 +187,7 @@ def main():
             if key in (ord("q"), 27):
                 break
     finally:
-        print("\n[TEST] Cerrando...")
+        print("\n[TEST] Closing...")
         cam.stop()
         if sign_det is not None:
             sign_det.stop()

@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""
-eval_yolo.py — Evalúa weights/tmr_signs.pt sobre traffic_lights/<split>/ a
-varios umbrales de confianza para escoger YOLO_CONF.
+"""Evaluate weights/tmr_signs.pt on traffic_lights/<split>/ at several
+confidence thresholds to choose YOLO_CONF.
 
-Reporta P / R / F1 / TP / FP / FN por clase y total para cada umbral.
-Una predicción cuenta como TP si IoU >= --iou y la clase coincide.
+Reports P / R / F1 / TP / FP / FN per class and total for each threshold.
+A prediction counts as a TP if IoU >= --iou and the class matches.
 
-Uso (desde cualquier directorio):
+Usage (from any directory):
     python TMR2026/tools/eval_yolo.py
     python TMR2026/tools/eval_yolo.py --split test --imgsz 320
     python TMR2026/tools/eval_yolo.py --confs 0.20,0.30,0.40,0.50,0.60
 
-Optimización: una sola pasada de inferencia por imagen al --probe-conf más bajo
-(0.05) y se filtran las detecciones post-hoc por cada umbral. NMS interna
-puede variar mínimamente, pero es suficiente para escoger el umbral.
+Optimization: a single inference pass per image at the lowest --probe-conf
+(0.05), with detections filtered post-hoc per threshold. The internal NMS may
+vary slightly, but it is enough to choose the threshold.
 """
 from __future__ import annotations
 
@@ -99,7 +98,7 @@ def main() -> None:
     ap.add_argument("--confs", default="0.25,0.35,0.45,0.55")
     ap.add_argument("--probe-conf", type=float, default=0.05)
     ap.add_argument("--limit", type=int, default=0,
-                    help="Limitar nº de imágenes (0 = todas)")
+                    help="Limit the number of images (0 = all)")
     args = ap.parse_args()
 
     confs = sorted(float(c) for c in args.confs.split(","))
@@ -107,19 +106,19 @@ def main() -> None:
     img_dir = Path(args.dataset) / args.split / "images"
     lbl_dir = Path(args.dataset) / args.split / "labels"
     if not img_dir.exists():
-        print(f"ERROR: no existe {img_dir}")
+        print(f"ERROR: {img_dir} does not exist")
         sys.exit(1)
 
     images = sorted(img_dir.glob("*.jpg")) + sorted(img_dir.glob("*.png"))
     if args.limit > 0:
         images = images[: args.limit]
     if not images:
-        print(f"ERROR: no hay imágenes en {img_dir}")
+        print(f"ERROR: no images in {img_dir}")
         sys.exit(1)
 
-    print(f"[EVAL] modelo:  {args.weights}")
-    print(f"[EVAL] split:   {args.split}  ({len(images)} imágenes)")
-    print(f"[EVAL] imgsz:   {args.imgsz}   IoU mínimo TP: {args.iou}")
+    print(f"[EVAL] model:   {args.weights}")
+    print(f"[EVAL] split:   {args.split}  ({len(images)} images)")
+    print(f"[EVAL] imgsz:   {args.imgsz}   min IoU TP: {args.iou}")
     print(f"[EVAL] confs:   {confs}")
 
     from ultralytics import YOLO

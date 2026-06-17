@@ -1,31 +1,30 @@
-"""
-export_imx500.py — Convierte tmr_signs.pt al formato del NPU IMX500 (.rpk).
+"""Convert tmr_signs.pt to the IMX500 NPU format (.rpk).
 
-El Sony IMX500 de la Pi AI Camera ejecuta el modelo DENTRO del sensor:
-la Pi recibe los tensores ya inferidos en la metadata de cada frame y la
-CPU queda libre. Para eso el modelo debe cuantizarse (INT8) y empaquetarse
-como .rpk con el toolchain de Sony — eso hace este script, vía el export
-`imx` de Ultralytics.
+The Pi AI Camera's Sony IMX500 runs the model INSIDE the sensor: the Pi
+receives the already-inferred tensors in each frame's metadata and the CPU
+stays free. For that, the model must be quantized (INT8) and packaged as a
+.rpk with Sony's toolchain -- this script does that, via Ultralytics' `imx`
+export.
 
-⚠ SOLO corre en LINUX (la propia Pi sirve; en Windows no existe el
-  imx500-converter). La cuantización usa el dataset traffic_lights/ como
-  calibración y puede tardar 15-60 min en la Pi 5 — se hace UNA sola vez.
+WARNING: runs on LINUX ONLY (the Pi itself works; Windows has no
+  imx500-converter). Quantization uses the traffic_lights/ dataset for
+  calibration and can take 15-60 min on the Pi 5 -- done ONCE.
 
-Prerequisitos (una vez, en la Pi):
+Prerequisites (once, on the Pi):
     sudo apt install -y imx500-all imx500-tools default-jre
     pip3 install --break-system-packages model-compression-toolkit "imx500-converter[pt]"
-    # (ultralytics intenta auto-instalar lo que falte)
+    # (ultralytics tries to auto-install anything missing)
 
-Uso (desde TMR2026/):
-    python tools/export_imx500.py                  # export completo
-    python tools/export_imx500.py --fraction 0.1   # calibración más rápida
+Usage (from TMR2026/):
+    python tools/export_imx500.py                  # full export
+    python tools/export_imx500.py --fraction 0.1   # faster calibration
 
-Al terminar deja:
-    weights/tmr_signs_imx500.rpk           ← lo que carga main.py (config.py)
-    weights/tmr_signs_imx500_labels.txt    ← orden de clases del modelo
+When finished it leaves:
+    weights/tmr_signs_imx500.rpk           <- loaded by main.py (config.py)
+    weights/tmr_signs_imx500_labels.txt    <- model class order
 
-main.py lo detecta solo en el siguiente arranque:
-    [VISION] Backend: NPU IMX500 (inferencia on-chip)
+main.py detects it on its own at the next startup:
+    [VISION] Backend: IMX500 NPU (on-chip inference)
 """
 
 import argparse
@@ -45,43 +44,43 @@ FALLBACK_LABELS = ("green", "left", "red", "right", "stop", "straight", "yellow"
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--fraction", type=float, default=0.25,
-                    help="fracción del dataset para calibrar INT8 "
-                         "(default 0.25 — sube a 1.0 para máxima precisión)")
+                    help="fraction of the dataset for INT8 calibration "
+                         "(default 0.25 -- raise to 1.0 for max accuracy)")
     args = ap.parse_args()
 
     if not sys.platform.startswith("linux"):
-        print("[IMX500] El imx500-converter de Sony solo existe en Linux.")
-        print("[IMX500] Corre este script EN LA RASPBERRY PI (o un Linux):")
+        print("[IMX500] Sony's imx500-converter only exists on Linux.")
+        print("[IMX500] Run this script ON THE RASPBERRY PI (or a Linux box):")
         print("[IMX500]     cd ~/Carrito/TMR2026 && python tools/export_imx500.py")
         return 1
 
     if not WEIGHTS.exists():
-        print(f"[IMX500] No existe {WEIGHTS}")
+        print(f"[IMX500] {WEIGHTS} does not exist")
         return 1
     if not DATA.exists():
-        print(f"[IMX500] No existe el dataset de calibración: {DATA}")
+        print(f"[IMX500] Calibration dataset does not exist: {DATA}")
         return 1
 
     from ultralytics import YOLO
 
-    print(f"[IMX500] Cargando {WEIGHTS} ...")
+    print(f"[IMX500] Loading {WEIGHTS} ...")
     model = YOLO(str(WEIGHTS))
-    print(f"[IMX500] Clases: {model.names}")
-    print(f"[IMX500] Exportando a formato imx (INT8, calibración "
-          f"{args.fraction:.0%} de {DATA.name}) ...")
-    print("[IMX500] Esto tarda 15-60 min en la Pi 5. Una sola vez. Paciencia.")
+    print(f"[IMX500] Classes: {model.names}")
+    print(f"[IMX500] Exporting to imx format (INT8, {args.fraction:.0%} "
+          f"calibration of {DATA.name}) ...")
+    print("[IMX500] This takes 15-60 min on the Pi 5. Once only. Be patient.")
 
     out = model.export(format="imx", data=str(DATA), fraction=args.fraction)
     out_dir = Path(out)
-    print(f"[IMX500] Export crudo en: {out_dir}")
+    print(f"[IMX500] Raw export at: {out_dir}")
 
     rpks = sorted(out_dir.rglob("*.rpk"))
     if not rpks:
-        print("[IMX500] ERROR: el export no produjo ningún .rpk.")
-        print("[IMX500] Revisa que imx500-tools y java estén instalados.")
+        print("[IMX500] ERROR: the export produced no .rpk.")
+        print("[IMX500] Check that imx500-tools and java are installed.")
         return 1
     shutil.copy2(rpks[0], DST_RPK)
-    print(f"[IMX500] .rpk listo: {DST_RPK}")
+    print(f"[IMX500] .rpk ready: {DST_RPK}")
 
     labels = sorted(out_dir.rglob("labels.txt"))
     if labels:
@@ -91,9 +90,9 @@ def main() -> int:
     print(f"[IMX500] labels:     {DST_LBL}")
 
     print("=" * 60)
-    print("[IMX500] LISTO. En el siguiente arranque main.py mostrará:")
-    print("[IMX500]   [VISION] Backend: NPU IMX500 (inferencia on-chip)")
-    print("[IMX500] Para volver al camino CPU: config.py -> USE_IMX500_NPU=False")
+    print("[IMX500] DONE. At the next startup main.py will show:")
+    print("[IMX500]   [VISION] Backend: IMX500 NPU (on-chip inference)")
+    print("[IMX500] To go back to the CPU path: config.py -> USE_IMX500_NPU=False")
     print("=" * 60)
     return 0
 

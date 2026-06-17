@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""
-capture_track.py — Graba frames BGR de la cámara para calibración offline del
-lane pipeline (HSV/BEV).
+"""Record BGR camera frames for offline lane-pipeline calibration (HSV/BEV).
 
-Modo interactivo (default): Enter para capturar, 'q' + Enter para salir.
-Modo automático: --auto N → un frame cada N segundos hasta Ctrl+C.
+Interactive mode (default): Enter to capture, 'q' + Enter to quit.
+Automatic mode: --auto N -> one frame every N seconds until Ctrl+C.
 
-Uso:
+Usage:
     cd /home/angel01/Carrito
     python TMR2026/tools/capture_track.py
     python TMR2026/tools/capture_track.py --auto 1.5
 
-Salida: TMR2026/tools/captures/track_<timestamp>.jpg (BGR JPG)
+Output: TMR2026/tools/captures/track_<timestamp>.jpg (BGR JPG)
 
-Requisitos: el servicio systemd no debe estar corriendo (usa la cámara).
+Requirements: the systemd service must not be running (it uses the camera).
     sudo systemctl stop carrito_tmr
 """
 from __future__ import annotations

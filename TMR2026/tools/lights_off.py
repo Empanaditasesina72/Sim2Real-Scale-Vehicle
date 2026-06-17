@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""
-lights_off.py — Apaga TODOS los LEDs de señalización del coche.
+"""Turn OFF ALL of the car's signaling LEDs.
 
-Fuerza a 0 los pines BCM definidos como LEDs en config.py y vision_config.yaml.
-Útil cuando un proceso previo (vision_module.py, una corrida que crasheó, el
-servicio systemd) dejó un LED encendido — lgpio NO resetea el nivel del pin
-al salir, sólo libera la reserva.
+Forces the BCM pins defined as LEDs in config.py and vision_config.yaml to 0.
+Useful when a previous process (vision_module.py, a crashed run, the systemd
+service) left an LED on -- lgpio does NOT reset the pin level on exit, it only
+releases the reservation.
 
-Uso:
-    sudo systemctl stop carrito_tmr     # si el servicio está corriendo
+Usage:
+    sudo systemctl stop carrito_tmr     # if the service is running
     python TMR2026/tools/lights_off.py
 """
 import sys
@@ -21,13 +20,13 @@ def main() -> int:
     try:
         import lgpio
     except ImportError:
-        print("ERROR: lgpio no disponible.")
+        print("ERROR: lgpio not available.")
         return 1
 
     try:
         handle = lgpio.gpiochip_open(4)
     except Exception as e:
-        print(f"ERROR abriendo gpiochip 4: {e}")
+        print(f"ERROR opening gpiochip 4: {e}")
         return 1
 
     n_off = 0
@@ -40,7 +39,7 @@ def main() -> int:
             print(f"  pin BCM {pin:>2}: OFF")
         except Exception as e:
             blocked.append(pin)
-            print(f"  pin BCM {pin:>2}: NO se pudo reclamar ({e})")
+            print(f"  pin BCM {pin:>2}: could not claim ({e})")
 
     time.sleep(0.05)
 
@@ -51,10 +50,10 @@ def main() -> int:
             pass
     lgpio.gpiochip_close(handle)
 
-    print(f"\n[OK] {n_off}/{len(LED_PINS)} pines forzados a 0.")
+    print(f"\n[OK] {n_off}/{len(LED_PINS)} pins forced to 0.")
     if blocked:
-        print(f"Pines bloqueados: {blocked}")
-        print("Otro proceso los tiene reservados. Ejecuta:")
+        print(f"Blocked pins: {blocked}")
+        print("Another process has them reserved. Run:")
         print("    sudo systemctl stop carrito_tmr")
         print("    pkill -f main.py ; pkill -f vision_module")
         return 2
