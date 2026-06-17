@@ -41,12 +41,12 @@ class LaneData:
 
 class LaneDetector:
     """
-    Detector de carril por visión para pista negra con líneas blancas.
+    Vision lane detector for a black track with white lines.
 
-    Parámetros calibrables:
-      roi_top_ratio   — fracción del alto desde arriba donde empieza el ROI
-      threshold       — valor mínimo de gris para considerar "blanco"
-      n_windows       — número de ventanas horizontales en el ROI
+    Calibratable parameters:
+      roi_top_ratio   -- fraction of the height (from the top) where the ROI starts
+      threshold       -- minimum gray value to count as "white"
+      n_windows       -- number of horizontal windows in the ROI
     """
 
     def __init__(
@@ -69,12 +69,12 @@ class LaneDetector:
 
     def process(self, frame: np.ndarray) -> LaneData:
         """
-        Procesa un frame BGR y devuelve LaneData.
+        Process a BGR frame and return LaneData.
 
         Parameters
         ----------
         frame : np.ndarray
-            Frame BGR888 de la cámara (640×480).
+            BGR888 camera frame (640x480).
         """
         gray   = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -128,11 +128,11 @@ class LaneDetector:
 
     def _find_lane_center(self, band: np.ndarray) -> tuple[float, float]:
         """
-        Localiza la línea izquierda y derecha en `band` usando ventana
-        deslizante por columnas y devuelve (centro_px, confianza).
+        Locate the left and right lines in `band` using a column-wise sliding
+        window and return (center_px, confidence).
 
-        Si solo se detecta una línea, estima la otra en base al ancho
-        típico del carril (la mitad de la imagen = todo el carril visible).
+        If only one line is detected, estimate the other from the typical lane
+        width (half the image = the whole visible lane).
         """
         if band.size == 0:
             return float(self._mid), 0.0
@@ -167,13 +167,13 @@ class LaneDetector:
 
     def _detect_crosswalk(self, binary: np.ndarray, roi_top: int) -> bool:
         """
-        Detecta un crucero peatonal (líneas blancas horizontales anchas).
+        Detect a crosswalk (wide horizontal white lines).
 
-        Busca en la zona media del frame (entre el horizonte y el ROI de carril)
-        filas donde más del CROSSWALK_WHITE_RATIO de los píxeles sean blancos.
-        Eso indica una franja blanca que cruza todo el ancho de la pista.
+        Search the middle band of the frame (between the horizon and the lane
+        ROI) for rows where more than CROSSWALK_WHITE_RATIO of the pixels are
+        white. That indicates a white stripe crossing the full track width.
 
-        Se requieren al menos 3 filas consecutivas para evitar falsos positivos.
+        At least 3 consecutive rows are required to avoid false positives.
         """
         search_top    = int(self._H * 0.30)
         search_bottom = roi_top

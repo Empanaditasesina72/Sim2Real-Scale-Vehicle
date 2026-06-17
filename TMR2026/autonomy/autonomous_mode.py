@@ -196,7 +196,7 @@ class AutonomousController:
         self.motor.set_throttle(lane.suggested_speed)
 
     def _do_approaching_stop(self, lane, stop_dist_mm, dt):
-        """Frena progresivamente hasta quedar a ≤30 cm de la señal."""
+        """Brake progressively until <=30 cm from the sign."""
         if stop_dist_mm is None:
             self.motor.set_throttle(SPEED_APPROACH * 0.4)
             self._apply_steering(lane, dt)
@@ -214,7 +214,7 @@ class AutonomousController:
         self._apply_steering(lane, dt)
 
     def _do_stopped_wait(self):
-        """5 segundos parado con LED parpadeante."""
+        """Stopped for 5 seconds with a blinking LED."""
         self.motor.brake()
         self.steering.center()
 
@@ -231,7 +231,7 @@ class AutonomousController:
             print("[AUTO] Resuming after STOP.")
 
     def _do_resuming(self, lane, dt):
-        """Aceleración gradual tras STOP."""
+        """Gradual acceleration after STOP."""
         RAMP_TIME = 1.5
         t = min((time.monotonic() - self._resume_start) / RAMP_TIME, 1.0)
         speed = SPEED_CURVE + t * (SPEED_STRAIGHT - SPEED_CURVE)
@@ -241,7 +241,7 @@ class AutonomousController:
             self._transition(AutoState.LANE_FOLLOWING)
 
     def _do_crosswalk_stop(self):
-        """Para en el crucero peatonal y espera CROSSWALK_STOP_SEC."""
+        """Stop at the crosswalk and wait CROSSWALK_STOP_SEC."""
         self.motor.brake()
         self.steering.center()
         if time.monotonic() - self._crosswalk_start >= CROSSWALK_STOP_SEC:
@@ -249,7 +249,7 @@ class AutonomousController:
             print("[AUTO] Resuming after crosswalk.")
 
     def _do_crosswalk_resume(self, lane, dt):
-        """Acelera suavemente tras el crucero."""
+        """Accelerate smoothly after the crosswalk."""
         RAMP_TIME = 1.0
         t = min((time.monotonic() - self._resume_start) / RAMP_TIME, 1.0)
         speed = SPEED_CURVE + t * (SPEED_STRAIGHT - SPEED_CURVE)
@@ -260,8 +260,8 @@ class AutonomousController:
 
     def _do_overtaking_left(self, dt):
         """
-        Fase 1: giro hacia el carril contrario (izquierda).
-        Dura OVERTAKE_LEFT_SEC segundos con ángulo fijo.
+        Phase 1: steer toward the opposite lane (left).
+        Lasts OVERTAKE_LEFT_SEC seconds at a fixed angle.
         """
         elapsed = time.monotonic() - self._overtake_start
         steer_angle = SERVO_CENTER_ANGLE - OVERTAKE_STEER_DEG
@@ -273,8 +273,8 @@ class AutonomousController:
 
     def _do_overtaking_pass(self, lane, dt):
         """
-        Fase 2: avanza recto pasando el obstáculo.
-        Usa el error de carril para mantenerse en el carril contrario.
+        Phase 2: drive straight, passing the obstacle.
+        Uses the lane error to stay in the opposite lane.
         """
         elapsed = time.monotonic() - self._overtake_start
         self._apply_steering(lane, dt)
@@ -285,8 +285,8 @@ class AutonomousController:
 
     def _do_overtaking_return(self, lane, dt):
         """
-        Fase 3: regresa al carril propio (derecha).
-        Dura OVERTAKE_RETURN_SEC segundos, luego vuelve a LANE_FOLLOWING.
+        Phase 3: return to the own lane (right).
+        Lasts OVERTAKE_RETURN_SEC seconds, then back to LANE_FOLLOWING.
         """
         elapsed = time.monotonic() - self._overtake_start
         steer_angle = SERVO_CENTER_ANGLE + OVERTAKE_STEER_DEG
@@ -303,8 +303,8 @@ class AutonomousController:
         tof_mm: Optional[float],
     ) -> Optional[float]:
         """
-        Devuelve la mejor estimación de distancia a la señal STOP.
-        Prioridad: ToF (preciso) > bbox (siempre disponible).
+        Return the best estimate of the distance to the STOP sign.
+        Priority: ToF (accurate) > bbox (always available).
         """
         if not obj_result.stop_sign_detected:
             self._last_stop_bbox = None

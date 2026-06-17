@@ -63,10 +63,10 @@ class Detection:
 
     def estimated_distance_m(self) -> Optional[float]:
         """
-        Estima la distancia usando la altura del bounding box y la altura real
-        conocida del objeto (método de perspectiva pin-hole).
+        Estimate the distance using the bounding-box height and the known real
+        height of the object (pin-hole perspective method).
 
-        Solo preciso para objetos con altura real conocida (señal STOP).
+        Only accurate for objects with a known real height (STOP sign).
         """
         if self.label != "STOP" or self.height < 5:
             return None
@@ -82,11 +82,11 @@ class CameraFrame:
 
 class CameraManager:
     """
-    Captura y procesado de la Pi AI Camera en hilo dedicado.
+    Capture and processing of the Pi AI Camera on a dedicated thread.
 
-    El hilo produce CameraFrame objetos que el bucle principal consume
-    mediante get_latest_frame() — siempre devuelve el frame más reciente,
-    nunca bloquea más de unos ms.
+    The thread produces CameraFrame objects that the main loop consumes via
+    get_latest_frame() -- it always returns the most recent frame and never
+    blocks for more than a few ms.
     """
 
     def __init__(self):
@@ -149,8 +149,8 @@ class CameraManager:
 
     def get_latest_frame(self) -> Optional[CameraFrame]:
         """
-        Retorna el frame más reciente sin bloquear.
-        Retorna None si aún no se ha capturado ninguno.
+        Return the most recent frame without blocking.
+        Returns None if none has been captured yet.
         """
         with self._frame_lock:
             return self._last_frame
@@ -194,17 +194,17 @@ class CameraManager:
         self, metadata: dict, img_shape: tuple
     ) -> list[Detection]:
         """
-        Extrae detecciones del tensor de salida del IMX500.
+        Extract detections from the IMX500 output tensor.
 
-        EfficientDet Lite0 _pp exporta 4 tensores (formato TensorFlow/COCO):
-          [0] boxes   : (1, N, 4)  [ymin, xmin, ymax, xmax] normalizados 0-1
+        EfficientDet Lite0 _pp exports 4 tensors (TensorFlow/COCO format):
+          [0] boxes   : (1, N, 4)  [ymin, xmin, ymax, xmax] normalized 0-1
           [1] classes : (1, N)     class ID (float)
-          [2] scores  : (1, N)     confianza
-          [3] count   : (1,)       número de detecciones válidas
+          [2] scores  : (1, N)     confidence
+          [3] count   : (1,)       number of valid detections
 
-        NOTA: el orden boxes/classes/scores varía según el modelo compilado.
-        El código intenta el formato EfficientDet y cae al formato YOLOv8
-        si el primero falla, para ser robusto ante modelos alternativos.
+        NOTE: the boxes/classes/scores order varies by compiled model.
+        The code tries the EfficientDet format and falls back to the YOLOv8
+        format if the first fails, to be robust to alternative models.
         """
         np_outputs = self._imx500.get_outputs(metadata, add_batch=True)
         if np_outputs is None:
@@ -266,8 +266,8 @@ class CameraManager:
 
     def _build_class_map(self):
         """
-        Construye el mapa class_id → nombre usando los intrínsecos del
-        modelo cargado en el IMX500, y luego filtra con CLASSES_OF_INTEREST.
+        Build the class_id -> name map using the intrinsics of the model
+        loaded in the IMX500, then filter with CLASSES_OF_INTEREST.
         """
         try:
             intrinsics = self._imx500.network_intrinsics

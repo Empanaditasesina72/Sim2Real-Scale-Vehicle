@@ -33,27 +33,27 @@ class MotorDriver:
         self._current_duty = 0.0
 
     def enable(self):
-        """No-op — el enable está en hardware (3.3V fijo)."""
+        """No-op -- enable is in hardware (fixed 3.3V)."""
         pass
 
     def disable(self):
-        """Rueda libre — corta ambos PWM."""
+        """Freewheel -- cut both PWMs."""
         lgpio.tx_pwm(self._h, PIN_MOTOR_RPWM, MOTOR_PWM_FREQ, 0)
         lgpio.tx_pwm(self._h, PIN_MOTOR_LPWM, MOTOR_PWM_FREQ, 0)
         self._current_duty = 0.0
 
     def set_throttle(self, duty: float):
         """
-        Aplica potencia al motor con rampa de subida (anti-inrush).
+        Apply power to the motor with a ramp-up (anti-inrush).
 
         Parameters
         ----------
         duty : float
-            [-100, 100]  >0 = avance, <0 = reversa, 0 = freno
+            [-100, 100]  >0 = forward, <0 = reverse, 0 = brake
 
-        Las bajadas de potencia (reducir o frenar) son instantáneas.
-        Las subidas están limitadas a _SLEW_STEP % por llamada para
-        evitar picos de corriente que apagan la batería.
+        Power decreases (reducing or braking) are instantaneous.
+        Increases are limited to _SLEW_STEP % per call to avoid current
+        spikes that shut down the battery.
         """
         duty = max(-100.0, min(100.0, duty))
 
@@ -74,7 +74,7 @@ class MotorDriver:
             self.brake()
 
     def brake(self):
-        """Freno eléctrico — ambas entradas al 100 %."""
+        """Electrical brake -- both inputs at 100 %."""
         lgpio.tx_pwm(self._h, PIN_MOTOR_RPWM, MOTOR_PWM_FREQ, 100)
         lgpio.tx_pwm(self._h, PIN_MOTOR_LPWM, MOTOR_PWM_FREQ, 100)
         self._current_duty = 0.0

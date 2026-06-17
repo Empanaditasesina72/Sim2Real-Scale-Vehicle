@@ -32,13 +32,13 @@ class TrafficLightState:
 
 class ObjectDetector:
     """
-    Interpreta las detecciones del IMX500 y devuelve eventos semánticos
-    para el controlador autónomo.
+    Interprets the IMX500 detections and returns semantic events for the
+    autonomous controller.
 
-    Incluye filtro temporal: una detección solo se confirma si aparece
-    en DETECTION_MIN_FRAMES frames consecutivos. Elimina falsos positivos.
+    Includes a temporal filter: a detection is only confirmed if it appears
+    in DETECTION_MIN_FRAMES consecutive frames. Removes false positives.
 
-    Uso:
+    Usage:
         od = ObjectDetector()
         result = od.analyze(detections, frame)
         if result.stop_distance_mm:
@@ -72,17 +72,17 @@ class ObjectDetector:
         tof_distance_mm: Optional[float] = None,
     ) -> "ObjectDetector.AnalysisResult":
         """
-        Analiza la lista de detecciones y el frame opcional para extraer
-        información semántica.
+        Analyze the detection list and the optional frame to extract semantic
+        information.
 
         Parameters
         ----------
         detections : list[Detection]
-            Detecciones del NPU del IMX500.
+            Detections from the IMX500 NPU.
         frame : np.ndarray
-            Frame BGR original (para clasificación de color de semáforo).
+            Original BGR frame (for traffic-light color classification).
         tof_distance_mm : float | None
-            Lectura actual del VL53L0X (para confirmar distancia de STOP).
+            Current VL53L0X reading (to confirm the STOP distance).
         """
         result      = self.AnalysisResult()
         seen_labels = set()
@@ -157,9 +157,9 @@ class ObjectDetector:
 
     def _has_red_color(self, frame: np.ndarray, det: Detection) -> bool:
         """
-        Verifica que el bbox de la señal STOP contiene suficiente rojo.
-        Filtra señales impresas con colores equivocados o falsos positivos.
-        Retorna True si al menos el 8% de los píxeles del bbox son rojos.
+        Check that the STOP sign bbox contains enough red.
+        Filters out printed signs with the wrong colors or false positives.
+        Returns True if at least 6% of the bbox pixels are red.
         """
         pad = 4
         x1 = max(0, det.x1 + pad)
@@ -183,13 +183,13 @@ class ObjectDetector:
         self, frame: np.ndarray, det: Detection
     ) -> TrafficLightState:
         """
-        Clasifica el color del semáforo usando la región del bbox.
+        Classify the traffic-light color using the bbox region.
 
-        Estrategia:
-          1. Recortar el bbox con margen pequeño.
-          2. Convertir a HSV.
-          3. Calcular máscara para rojo, amarillo y verde.
-          4. El color con mayor número de píxeles detectados gana.
+        Strategy:
+          1. Crop the bbox with a small margin.
+          2. Convert to HSV.
+          3. Compute a mask for red, yellow and green.
+          4. The color with the most detected pixels wins.
         """
         pad = 4
         x1 = max(0, det.x1 + pad)

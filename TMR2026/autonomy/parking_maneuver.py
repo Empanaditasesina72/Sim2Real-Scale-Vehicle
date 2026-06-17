@@ -51,15 +51,15 @@ class ParkingState(Enum):
 
 class ParkingManeuver:
     """
-    Sub-FSM de estacionamiento en batería.
+    Battery-parking sub-FSM.
 
-    Parámetros geométricos (todos en config.py):
-      PARK_OVERSHOOT_SEC       : tiempo de avance extra tras detectar el hueco
-      PARK_REVERSE_LOCK_SEC    : tiempo de reversa con giro máximo
-      PARK_REVERSE_STRAIGHT_SEC: tiempo de reversa derecho
+    Geometric parameters (all in config.py):
+      PARK_OVERSHOOT_SEC       : extra forward time after detecting the gap
+      PARK_REVERSE_LOCK_SEC    : reverse time with maximum steering
+      PARK_REVERSE_STRAIGHT_SEC: straight reverse time
 
-    Estos tiempos se calibran en pista.  Reemplazar con encoder/odometría
-    si el coche los tiene.
+    These times are calibrated on the track. Replace with encoder/odometry
+    if the car has them.
     """
 
     def __init__(self, gap_side: str = "right"):
@@ -187,8 +187,8 @@ class ParkingManeuver:
 
     def _calc_turning_radius(self) -> float:
         """
-        Radio de giro en la fase REVERSING_LOCK usando el ángulo máximo.
-        R = L / tan(δ)
+        Turning radius in the REVERSING_LOCK phase using the maximum angle.
+        R = L / tan(delta)
         """
         delta = abs(self._lock_angle - SERVO_CENTER_ANGLE)
         delta_rad = math.radians(delta)
@@ -198,12 +198,12 @@ class ParkingManeuver:
 
     def _estimate_arc_time(self) -> float:
         """
-        Estima el tiempo necesario para rotar 90° en el arco Ackermann
-        a la velocidad de maniobra.  Solo es una guía — el tiempo exacto
-        se calibra en PARK_REVERSE_LOCK_SEC (config.py).
+        Estimate the time needed to rotate 90 deg along the Ackermann arc at
+        the manoeuvre speed. It is only a guide -- the exact time is
+        calibrated in PARK_REVERSE_LOCK_SEC (config.py).
 
-        Longitud del arco para 90°: s = (π/2) * R
-        Velocidad lineal aproximada (map 18% PWM → ~0.25 m/s en escala 1:10).
+        Arc length for 90 deg: s = (pi/2) * R
+        Approximate linear speed (map 18% PWM -> ~0.25 m/s at 1:10 scale).
         """
         SPEED_MS_APPROX = 0.20
         arc_length = (math.pi / 2) * self._R_turn
@@ -212,13 +212,13 @@ class ParkingManeuver:
 
     def _detect_gap(self, tof_mm, obj_result, now: float) -> bool:
         """
-        Combina cámara y ToF para decidir si hay un hueco de estacionamiento.
+        Combine camera and ToF to decide whether there is a parking gap.
 
-        Lógica:
-        - Si hay obj_result → usar cámara como fuente principal.
-          El hueco existe cuando NO hay AUTO en la zona lateral derecha
-          durante al menos PARK_GAP_CAMERA_MIN_SEC segundos.
-        - Si no hay obj_result → caer a ToF (comportamiento original).
+        Logic:
+        - If obj_result exists -> use the camera as the primary source.
+          The gap exists when there is NO AUTO in the right-side zone for at
+          least PARK_GAP_CAMERA_MIN_SEC seconds.
+        - If there is no obj_result -> fall back to ToF (original behavior).
         """
         if obj_result is not None:
             return self._detect_gap_camera(obj_result, now)
@@ -228,12 +228,12 @@ class ParkingManeuver:
 
     def _detect_gap_camera(self, obj_result, now: float) -> bool:
         """
-        Detecta el hueco cuando el espacio lateral derecho está despejado.
+        Detect the gap when the right-side space is clear.
 
-        Mientras el primer auto delimitador estaba en el lado derecho y
-        ahora ya no hay AUTO en esa zona = inicio del hueco.
-        Requiere PARK_GAP_CAMERA_MIN_SEC segundos consecutivos sin AUTO lateral
-        para confirmar (evita falsos positivos por frames ruidosos).
+        While the first delimiting car was on the right side and now there is
+        no longer an AUTO in that zone = start of the gap.
+        Requires PARK_GAP_CAMERA_MIN_SEC consecutive seconds without a side
+        AUTO to confirm (avoids false positives from noisy frames).
         """
         lateral_clear = not obj_result.car_in_park_zone
 

@@ -53,11 +53,11 @@ class GamepadState:
 
 class GamepadReader:
     """
-    Lector de gamepad Bluetooth en hilo dedicado.
+    Bluetooth gamepad reader on a dedicated thread.
 
-    Detecta reconexión automáticamente: si el mando se desconecta,
-    el sistema regresa a STANDBY y el hilo espera hasta que vuelva
-    a estar disponible.
+    Detects reconnection automatically: if the gamepad disconnects, the
+    system returns to STANDBY and the thread waits until it becomes
+    available again.
     """
 
     POLL_HZ = 100
@@ -108,8 +108,8 @@ class GamepadReader:
 
     def consume_button(self, btn_id: int) -> bool:
         """
-        Devuelve True UNA SOLA VEZ cuando el botón fue presionado
-        (flanco de subida), luego lo resetea.  Útil para cambios de modo.
+        Return True ONLY ONCE when the button was pressed (rising edge),
+        then reset it. Useful for mode changes.
         """
         with self._lock:
             pressed = self._button_pressed.get(btn_id, False)
