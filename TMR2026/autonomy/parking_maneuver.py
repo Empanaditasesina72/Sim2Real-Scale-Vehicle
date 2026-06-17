@@ -1,37 +1,26 @@
-"""
-parking_maneuver.py — Sub-máquina de estados para Estacionamiento en Batería.
+"""State sub-machine for perpendicular (battery) parking.
 
-Reto TMR 2026:
-  Espacio de 60 cm entre dos coches estáticos.
-  El coche debe entrar perpendicularmente en reversa (estacionamiento en batería).
+TMR 2026 challenge:
+  A 60 cm gap between two static cars.
+  The car must enter perpendicularly in reverse (battery parking).
 
-Cinemática Ackermann usada:
-  Radio de giro: R = L / tan(δ)  (modelo bicicleta)
-  Donde:
-    L = WHEELBASE (distancia entre ejes)
-    δ = ángulo de dirección central (servo − 90°)
+Ackermann kinematics used:
+  Turning radius: R = L / tan(delta)  (bicycle model)
+  where:
+    L     = WHEELBASE (distance between axles)
+    delta = central steering angle (servo - 90 deg)
 
-Maniobra planificada (desde posición alineada con el espacio):
-  ┌─ SEARCHING ─────────────────────────────────────────────────────┐
-  │  Avanza despacio.  VL53L0X lateral detecta un hueco ≥ 60 cm.   │
-  └──────────────────────────────────────────────────────────────────┘
-        ↓  gap detectado
-  ┌─ POSITIONING ────────────────────────────────────────────────────┐
-  │  Avanza un poco más para alinear el eje trasero con el hueco.   │
-  └──────────────────────────────────────────────────────────────────┘
-        ↓  tiempo de avance completado
-  ┌─ REVERSING_LOCK ──────────────────────────────────────────────────┐
-  │  Reversa con máximo giro Ackermann hacia el hueco.               │
-  │  La trayectoria curva mete la parte trasera en el espacio.       │
-  └──────────────────────────────────────────────────────────────────┘
-        ↓  tiempo de arco completado
-  ┌─ REVERSING_STRAIGHT ──────────────────────────────────────────────┐
-  │  Endereza ruedas y continúa en reversa hasta centrarse.          │
-  └──────────────────────────────────────────────────────────────────┘
-        ↓  tiempo completado
-  ┌─ PARKED ──────────────────────────────────────────────────────────┐
-  │  Motor stop.  Señal de completado al controlador principal.      │
-  └──────────────────────────────────────────────────────────────────┘
+Planned manoeuvre (from a position aligned with the gap):
+  SEARCHING          -> drive slowly; the side VL53L0X detects a gap >= 60 cm.
+        | gap detected
+  POSITIONING        -> drive a bit more to align the rear axle with the gap.
+        | forward time elapsed
+  REVERSING_LOCK     -> reverse with maximum Ackermann steering into the gap;
+                        the curved path tucks the rear into the space.
+        | arc time elapsed
+  REVERSING_STRAIGHT -> straighten the wheels and keep reversing until centred.
+        | time elapsed
+  PARKED             -> motor stop; signals completion to the main controller.
 """
 
 import math
@@ -104,15 +93,15 @@ class ParkingManeuver:
         return self._state == ParkingState.PARKED
 
     def start(self):
-        """Inicia la búsqueda del espacio de estacionamiento."""
+        """Start searching for the parking gap."""
         self._state = ParkingState.SEARCHING
         self._phase_start = time.monotonic()
-        print("[PARKING] Iniciando búsqueda de espacio...")
+        print("[PARKING] Searching for a parking gap...")
 
     def abort(self):
-        """Aborta la maniobra y regresa al estado IDLE."""
+        """Abort the manoeuvre and return to the IDLE state."""
         self._state = ParkingState.ABORTED
-        print("[PARKING] Maniobra abortada.")
+        print("[PARKING] Manoeuvre aborted.")
 
     def reset(self):
         self._state = ParkingState.IDLE
@@ -125,18 +114,18 @@ class ParkingManeuver:
         obj_result=None,
     ) -> ParkingState:
         """
-        Actualiza la FSM.  Debe llamarse en cada ciclo del bucle principal.
+        Update the FSM. Must be called every iteration of the main loop.
 
         Parameters
         ----------
         tof_distance_mm : float | None
-            Lectura del VL53L0X (frontal o lateral según montaje).
+            VL53L0X reading (front or side depending on the mount).
         motor : MotorDriver
         steering : SteeringDriver
 
         Returns
         -------
-        ParkingState actual
+        current ParkingState
         """
         now = time.monotonic()
         elapsed = now - self._phase_start
@@ -148,7 +137,7 @@ class ParkingManeuver:
             motor.stop()
             steering.center()
             self.abort()
-            print("[PARKING] EMERGENCIA: obstáculo durante reversa.")
+            print("[PARKING] EMERGENCY: obstacle during reverse.")
             return self._state
 
         match self._state:
@@ -162,7 +151,7 @@ class ParkingManeuver:
                 if gap_open:
                     self._gap_detected_at = now
                     self._transition(ParkingState.POSITIONING)
-                    print(f"[PARKING] Hueco detectado. Posicionando...")
+                    print(f"[PARKING] Gap detected. Positioning...")
 
             case ParkingState.POSITIONING:
                 motor.set_throttle(PARK_SEARCH_SPEED)
@@ -170,7 +159,7 @@ class ParkingManeuver:
 
                 if elapsed >= PARK_OVERSHOOT_SEC:
                     self._transition(ParkingState.REVERSING_LOCK)
-                    print("[PARKING] Posición lista. Iniciando reversa con giro...")
+                    print("[PARKING] Position ready. Starting reverse with steering...")
 
             case ParkingState.REVERSING_LOCK:
                 motor.set_throttle(-PARK_MANEUVER_SPEED)
@@ -179,7 +168,7 @@ class ParkingManeuver:
                 arc_time = self._estimate_arc_time()
                 if elapsed >= arc_time:
                     self._transition(ParkingState.REVERSING_STRAIGHT)
-                    print("[PARKING] Arco completado. Enderezando...")
+                    print("[PARKING] Arc complete. Straightening...")
 
             case ParkingState.REVERSING_STRAIGHT:
                 motor.set_throttle(-PARK_MANEUVER_SPEED)
@@ -189,7 +178,7 @@ class ParkingManeuver:
                     motor.stop()
                     steering.center()
                     self._state = ParkingState.PARKED
-                    print("[PARKING] ¡Estacionamiento completado!")
+                    print("[PARKING] Parking complete!")
 
             case ParkingState.PARKED | ParkingState.IDLE | ParkingState.ABORTED:
                 pass

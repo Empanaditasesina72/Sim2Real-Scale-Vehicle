@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""
-test_sim_connection.py — Verifica que la conexión Sim2Real funcione.
+"""Verify that the Sim2Real connection works.
 
-Ejecutar DESPUÉS de que Unity esté escuchando en 127.0.0.1:5005:
+Run AFTER Unity is listening on 127.0.0.1:5005:
   python test_sim_connection.py
 
-Resultado esperado: "ALL TESTS PASSED ✓"
+Expected result: "ALL TESTS PASSED"
 """
 
 import time

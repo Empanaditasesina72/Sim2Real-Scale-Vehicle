@@ -1,9 +1,8 @@
-"""
-test_signals.py — verifica que TurnSignals parpadea a 2 Hz usando
-time.monotonic() (sin sleep) y que HAZARD enciende ambos LEDs en fase.
+"""Verify that TurnSignals blinks at 2 Hz using time.monotonic() (no sleep)
+and that HAZARD turns on both LEDs in phase.
 
-Sin hardware: se subclasea TurnSignals para interceptar _write() y
-se mockea time.monotonic() para controlar el avance del parpadeo.
+No hardware: TurnSignals is subclassed to intercept _write() and
+time.monotonic() is mocked to control the blink progression.
 """
 
 import time
@@ -32,7 +31,7 @@ def _last_write(sig: FakeSignals, pin: int):
 
 
 def test_off_keeps_both_leds_low(monkeypatch):
-    """OFF nunca debe escribir 1 a ningún LED."""
+    """OFF must never write 1 to any LED."""
     fake_t = [0.0]
     monkeypatch.setattr(time, "monotonic", lambda: fake_t[0])
 

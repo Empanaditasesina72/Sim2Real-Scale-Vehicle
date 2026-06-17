@@ -1,8 +1,7 @@
-"""
-test_gamepad.py — Identificar ejes y botones del control.
-Corre: python3 test_gamepad.py
-Mueve palancas, presiona gatillos y botones para ver qué número tienen.
-Ctrl+C para salir.
+"""Identify the controller's axes and buttons.
+Run: python3 test_gamepad.py
+Move sticks, press triggers and buttons to see their numbers.
+Ctrl+C to quit.
 """
 import time
 import os
@@ -14,15 +13,15 @@ pygame.init()
 pygame.joystick.init()
 
 if pygame.joystick.get_count() == 0:
-    print("No se detectó ningún control. Conéctalo por Bluetooth y vuelve a correr.")
+    print("No controller detected. Connect it via Bluetooth and run again.")
     exit(1)
 
 js = pygame.joystick.Joystick(0)
 js.init()
-print(f"Control: {js.get_name()}")
-print(f"Ejes: {js.get_numaxes()}  |  Botones: {js.get_numbuttons()}")
+print(f"Controller: {js.get_name()}")
+print(f"Axes: {js.get_numaxes()}  |  Buttons: {js.get_numbuttons()}")
 print("-" * 50)
-print("Mueve palancas/gatillos o presiona botones...\n")
+print("Move sticks/triggers or press buttons...\n")
 
 last_axes = [0.0] * js.get_numaxes()
 last_btns = [0]  * js.get_numbuttons()
@@ -36,18 +35,18 @@ try:
 
         for i, (a, la) in enumerate(zip(axes, last_axes)):
             if abs(a - la) > 0.08:
-                print(f"  EJE  {i:2d} = {a:+.2f}")
+                print(f"  AXIS {i:2d} = {a:+.2f}")
 
         for i, (b, lb) in enumerate(zip(btns, last_btns)):
             if b and not lb:
-                print(f"  BTN  {i:2d} PRESIONADO")
+                print(f"  BTN  {i:2d} PRESSED")
             elif not b and lb:
-                print(f"  BTN  {i:2d} soltado")
+                print(f"  BTN  {i:2d} released")
 
         last_axes = axes
         last_btns = btns
         time.sleep(0.05)
 
 except KeyboardInterrupt:
-    print("\nListo.")
+    print("\nDone.")
     pygame.quit()

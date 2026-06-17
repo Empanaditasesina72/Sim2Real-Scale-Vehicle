@@ -1,13 +1,12 @@
-"""
-test_fsm_transitions.py — verifica las 5 transiciones de AutonomousFSM y
-la interacción con signals + brake_light.  Sin hardware.
+"""Verify the 5 AutonomousFSM transitions and the interaction with
+signals + brake_light. No hardware.
 
-Transiciones probadas:
-  1. CRUCERO → PRECAUCION (por sign_visible)
-  2. PRECAUCION → FRENADO  (por lidar ≤ LIDAR_STOP_MM)
-  3. PRECAUCION → FRENADO  (por bbox cuando NO hay lidar)   ← fallback
-  4. ESPERA usa time.monotonic() y NO bloquea durante los 5 s
-  5. FRENADO/ESPERA encienden brake_light + HAZARD
+Transitions tested:
+  1. CRUCERO -> PRECAUCION (via sign_visible)
+  2. PRECAUCION -> FRENADO  (via lidar <= LIDAR_STOP_MM)
+  3. PRECAUCION -> FRENADO  (via bbox when there is NO lidar)   <- fallback
+  4. ESPERA uses time.monotonic() and does NOT block during the 5 s
+  5. FRENADO/ESPERA turn on brake_light + HAZARD
 """
 
 import time
@@ -90,7 +89,7 @@ def test_precaucion_to_frenado_by_lidar():
 
 
 def test_precaucion_to_frenado_by_bbox_when_no_lidar():
-    """Fallback: sin lidar, el bbox dispara FRENADO cuando la señal está cerca."""
+    """Fallback: with no lidar, the bbox triggers FRENADO when the sign is close."""
     fsm = _make_fsm()
     fsm.activate()
     fsm.lane_conf    = 1.0

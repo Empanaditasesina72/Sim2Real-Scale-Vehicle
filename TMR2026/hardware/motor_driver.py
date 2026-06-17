@@ -1,17 +1,16 @@
-"""
-motor_driver.py — Control del puente H IBT-2 vía lgpio (Pi 5 nativo).
+"""IBT-2 H-bridge control via lgpio (native Pi 5).
 
-Cableado real del coche:
-  RPWM = GPIO 18 (Pin 12)  — PWM avance
-  LPWM = GPIO 13 (Pin 33)  — PWM reversa
-  R_EN + L_EN → 3.3V fijo  — siempre habilitado (sin GPIO de enable)
+Real car wiring:
+  RPWM = GPIO 18 (Pin 12)  -- forward PWM
+  LPWM = GPIO 13 (Pin 33)  -- reverse PWM
+  R_EN + L_EN -> fixed 3.3V -- always enabled (no enable GPIO)
 
-Con R_EN y L_EN en 3.3V, el puente está siempre activo.
-El control de dirección y velocidad se hace solo con RPWM y LPWM:
-  Avance  → RPWM=%duty, LPWM=0
-  Reversa → RPWM=0,     LPWM=%duty
-  Freno   → RPWM=100,   LPWM=100  (freno eléctrico)
-  Stop    → RPWM=0,     LPWM=0    (rueda libre)
+With R_EN and L_EN at 3.3V the bridge is always active.
+Direction and speed control use only RPWM and LPWM:
+  Forward -> RPWM=%duty, LPWM=0
+  Reverse -> RPWM=0,     LPWM=%duty
+  Brake   -> RPWM=100,   LPWM=100  (electrical brake)
+  Stop    -> RPWM=0,     LPWM=0    (freewheel)
 """
 
 import lgpio

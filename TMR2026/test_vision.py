@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""
-test_vision.py — Visualización 4 paneles del módulo de visión TMR 2026.
+"""4-panel visualization of the TMR 2026 vision module.
 
-Paneles:
-  [TL] Plano Y (640×480) — stream lores en escala de grises
-  [TR] Máscara binaria + morfología del ROI de carril (líneas blancas)
-  [BL] Frame principal (640×360) con bboxes NPU y línea de carril
-  [BR] Gráfica de FPS en tiempo real (ventana deslizante 60 frames)
+Panels:
+  [TL] Y plane (640x480) -- grayscale lores stream
+  [TR] Binary mask + morphology of the lane ROI (white lines)
+  [BL] Main frame (640x360) with NPU bboxes and lane line
+  [BR] Real-time FPS plot (60-frame sliding window)
 
-Controles:
-  Q / Esc  → salir
-  R        → recalibrar AE/AWB (recarga también vision_config.yaml)
+Controls:
+  Q / Esc  -> quit
+  R        -> recalibrate AE/AWB (also reloads vision_config.yaml)
 
-Uso:
+Usage:
   python3 test_vision.py
 """
 
@@ -79,7 +78,7 @@ def _panel_y_plane(y_plane: np.ndarray) -> np.ndarray:
 
 
 def _panel_mask(y_plane: np.ndarray) -> np.ndarray:
-    """Panel TR: máscara binaria del ROI de carril después de MORPH_OPEN."""
+    """Panel TR: binary mask of the lane ROI after MORPH_OPEN."""
     if y_plane is None:
         return np.zeros((P_H, P_W, 3), dtype=np.uint8)
     roi = y_plane[_ROI_Y0:_ROI_Y1, :]
@@ -105,7 +104,7 @@ def _panel_mask(y_plane: np.ndarray) -> np.ndarray:
 
 
 def _panel_main(frame, vs, lane_error: float, lane_conf: float) -> np.ndarray:
-    """Panel BL: frame principal escalado a 640×360 con bboxes y línea de carril."""
+    """Panel BL: main frame scaled to 640x360 with bboxes and lane line."""
     if frame is None:
         p = np.zeros((P_H, P_W, 3), dtype=np.uint8)
         _put(p, "Sin frame de camara", (20, P_H // 2), (100, 100, 100), 0.7, 2)
@@ -139,7 +138,7 @@ def _panel_main(frame, vs, lane_error: float, lane_conf: float) -> np.ndarray:
 
 
 def _panel_fps(fps_history: list) -> np.ndarray:
-    """Panel BR: gráfica de FPS en tiempo real."""
+    """Panel BR: real-time FPS plot."""
     panel = np.zeros((P_H, P_W, 3), dtype=np.uint8)
     if not fps_history:
         _put(panel, "FPS graph", (P_W//2 - 40, P_H//2), (100, 100, 100), 0.6)

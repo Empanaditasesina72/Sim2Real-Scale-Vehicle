@@ -1,16 +1,15 @@
-"""
-gamepad_reader.py — Mando Bluetooth (Xbox/PS4 genérico) vía pygame.
+"""Bluetooth gamepad (generic Xbox/PS4) via pygame.
 
-El hilo de lectura sondea el joystick a 100 Hz y expone el estado
-mediante propiedades thread-safe.  El bucle principal nunca bloquea.
+The reader thread polls the joystick at 100 Hz and exposes the state through
+thread-safe properties. The main loop never blocks.
 
-Mapeo por defecto (configurable en config.py):
-  Eje 3   → Joystick derecho X  (dirección)
-  Eje 5   → Gatillo R2          (acelerador, rango [-1, 1])
-  Eje 4   → Gatillo L2          (freno)
-  Botón 0 → Volver a Manual
-  Botón 1 → Modo Vision Test
-  Botón 2 → Modo Autónomo
+Default mapping (configurable in config.py):
+  Axis 3   -> Right stick X   (steering)
+  Axis 5   -> R2 trigger       (throttle, range [-1, 1])
+  Axis 4   -> L2 trigger       (brake)
+  Button 0 -> Back to Manual
+  Button 1 -> Vision Test mode
+  Button 2 -> Autonomous mode
 """
 
 import threading

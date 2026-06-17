@@ -1,18 +1,17 @@
-"""
-lane_detector.py — Detección de carril con OpenCV.
+"""Lane detection with OpenCV.
 
-Pista TMR: Carpeta NEGRA con líneas BLANCAS.
+TMR track: BLACK surface with WHITE lines.
 
-Algoritmo:
-  1. ROI: franja inferior del frame (donde están las líneas más cercanas).
-  2. Escala de grises → blur → umbral binario alto (blanco sobre negro).
-  3. Ventana deslizante horizontal para detectar línea izquierda y derecha.
-  4. Centro del carril = media de ambas líneas.
-  5. Error de carril = centro_carril − centro_imagen  (px).
-  6. Curvatura estimada = diferencia de error entre banda cercana y lejana.
-  7. Velocidad sugerida basada en la curvatura.
+Algorithm:
+  1. ROI: lower strip of the frame (where the nearest lines are).
+  2. Grayscale -> blur -> high binary threshold (white on black).
+  3. Horizontal sliding window to detect the left and right lines.
+  4. Lane center = mean of both lines.
+  5. Lane error = lane_center - image_center  (px).
+  6. Estimated curvature = error difference between the near and far bands.
+  7. Suggested speed based on the curvature.
 
-Salida: LaneData con error_px, curvature_rad, is_curve, confidence.
+Output: LaneData with error_px, curvature_rad, is_curve, confidence.
 """
 
 from dataclasses import dataclass

@@ -1,12 +1,11 @@
-"""
-object_detector.py — Post-procesado de las detecciones del IMX500.
+"""Post-processing of the IMX500 detections.
 
-Las detecciones ya vienen resueltas por el NPU en camera_manager.py.
-Este módulo provee lógica de alto nivel:
-  - Filtrar detecciones por clase y umbral.
-  - Calcular distancia estimada a señales STOP.
-  - Detectar el color de un semáforo usando la región del bbox.
-  - Proveer información estructurada al controlador autónomo.
+The detections already come resolved by the NPU in camera_manager.py.
+This module provides high-level logic:
+  - Filter detections by class and threshold.
+  - Compute the estimated distance to STOP signs.
+  - Detect a traffic-light color using the bbox region.
+  - Provide structured information to the autonomous controller.
 """
 
 from dataclasses import dataclass

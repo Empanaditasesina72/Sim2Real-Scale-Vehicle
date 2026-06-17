@@ -1,20 +1,19 @@
-"""
-autonomous_mode.py — Controlador autónomo TMR 2026.
+"""TMR 2026 autonomous controller.
 
-Estados:
-  LANE_FOLLOWING    → seguimiento normal del carril
-  APPROACHING_STOP  → señal STOP detectada, frenado progresivo
-  STOPPED_WAIT      → parado frente a STOP, contando 5 s
-  RESUMING          → aceleración gradual tras pausa
-  CROSSWALK_STOP    → crucero peatonal detectado, pausa 3 s
-  CROSSWALK_RESUME  → reanudando tras crucero
-  PARKING           → delega en ParkingManeuver
-  OBSTACLE_HOLD     → obstáculo inesperado por ToF
+States:
+  LANE_FOLLOWING    -> normal lane following
+  APPROACHING_STOP  -> STOP sign detected, progressive braking
+  STOPPED_WAIT      -> stopped at STOP, counting 5 s
+  RESUMING          -> gradual acceleration after the pause
+  CROSSWALK_STOP    -> crosswalk detected, 3 s pause
+  CROSSWALK_RESUME  -> resuming after the crosswalk
+  PARKING           -> delegates to ParkingManeuver
+  OBSTACLE_HOLD     -> unexpected obstacle via ToF
 
-Distancia a señal STOP:
-  Prioridad 1: VL53L0X frontal (si está disponible)
-  Prioridad 2: Estimación por tamaño del bbox en la imagen (siempre disponible)
-  Fórmula bbox: d = (altura_real * focal) / altura_px
+Distance to the STOP sign:
+  Priority 1: front VL53L0X (if available)
+  Priority 2: estimate from the bbox size in the image (always available)
+  bbox formula: d = (real_height * focal) / height_px
 """
 
 import time
@@ -171,11 +170,11 @@ class AutonomousController:
         if lane.confidence < LANE_MIN_CONFIDENCE:
             self.motor.brake()
             self.steering.center()
-            print("\r[AUTO] Sin pista — esperando carril...          ", end="", flush=True)
+            print("\r[AUTO] No track -- waiting for the lane...        ", end="", flush=True)
             return
 
         if obj_result.car_in_lane:
-            print("\n[AUTO] Obstáculo en carril → iniciando rebase")
+            print("\n[AUTO] Obstacle in lane -> starting overtake")
             self._transition(AutoState.OVERTAKING_LEFT)
             return
 
@@ -229,7 +228,7 @@ class AutonomousController:
         if now - self._stop_wait_start >= STOP_WAIT_SEC:
             self._set_led(PIN_LED_STOP, False)
             self._transition(AutoState.RESUMING)
-            print("[AUTO] Reanudando tras STOP.")
+            print("[AUTO] Resuming after STOP.")
 
     def _do_resuming(self, lane, dt):
         """Aceleración gradual tras STOP."""
@@ -247,7 +246,7 @@ class AutonomousController:
         self.steering.center()
         if time.monotonic() - self._crosswalk_start >= CROSSWALK_STOP_SEC:
             self._transition(AutoState.CROSSWALK_RESUME)
-            print("[AUTO] Reanudando tras crucero peatonal.")
+            print("[AUTO] Resuming after crosswalk.")
 
     def _do_crosswalk_resume(self, lane, dt):
         """Acelera suavemente tras el crucero."""
@@ -268,7 +267,7 @@ class AutonomousController:
         steer_angle = SERVO_CENTER_ANGLE - OVERTAKE_STEER_DEG
         self.steering.set_angle(steer_angle)
         self.motor.set_throttle(SPEED_CURVE)
-        print(f"\r[REBASE] Izquierda {elapsed:.1f}/{OVERTAKE_LEFT_SEC:.1f}s   ", end="", flush=True)
+        print(f"\r[OVERTAKE] Left {elapsed:.1f}/{OVERTAKE_LEFT_SEC:.1f}s   ", end="", flush=True)
         if elapsed >= OVERTAKE_LEFT_SEC:
             self._transition(AutoState.OVERTAKING_PASS)
 
@@ -280,7 +279,7 @@ class AutonomousController:
         elapsed = time.monotonic() - self._overtake_start
         self._apply_steering(lane, dt)
         self.motor.set_throttle(SPEED_CURVE)
-        print(f"\r[REBASE] Pasando  {elapsed:.1f}/{OVERTAKE_PASS_SEC:.1f}s   ", end="", flush=True)
+        print(f"\r[OVERTAKE] Passing  {elapsed:.1f}/{OVERTAKE_PASS_SEC:.1f}s   ", end="", flush=True)
         if elapsed >= OVERTAKE_PASS_SEC:
             self._transition(AutoState.OVERTAKING_RETURN)
 
@@ -293,7 +292,7 @@ class AutonomousController:
         steer_angle = SERVO_CENTER_ANGLE + OVERTAKE_STEER_DEG
         self.steering.set_angle(steer_angle)
         self.motor.set_throttle(SPEED_CURVE)
-        print(f"\r[REBASE] Regreso  {elapsed:.1f}/{OVERTAKE_RETURN_SEC:.1f}s  ", end="", flush=True)
+        print(f"\r[OVERTAKE] Return  {elapsed:.1f}/{OVERTAKE_RETURN_SEC:.1f}s  ", end="", flush=True)
         if elapsed >= OVERTAKE_RETURN_SEC:
             print()
             self._transition(AutoState.LANE_FOLLOWING)

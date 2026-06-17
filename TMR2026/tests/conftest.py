@@ -1,14 +1,13 @@
-"""
-conftest.py — configuración común de los tests de TMR 2026.
+"""Common configuration for the TMR 2026 tests.
 
-Añade `TMR2026/` a sys.path para que los tests puedan importar
-`hardware.*`, `control.*`, `vision.*` directamente (igual que main.py).
+Adds `TMR2026/` to sys.path so the tests can import `hardware.*`,
+`control.*`, `vision.*` directly (just like main.py).
 
-Correr desde la raíz del repo:
+Run from the repo root:
 
     pytest TMR2026/tests -v
 
-O desde TMR2026:
+Or from TMR2026:
 
     cd TMR2026 && pytest tests -v
 """

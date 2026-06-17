@@ -1,17 +1,16 @@
-"""
-camera_manager.py — Pi AI Camera (Sony IMX500) vía Picamera2.
+"""Pi AI Camera (Sony IMX500) via Picamera2.
 
-Estrategia NPU:
-  El IMX500 ejecuta la inferencia YOLOv8 directamente en su acelerador
-  neuronal integrado (NPU on-chip).  La Pi 5 recibe:
-    1. El frame BGR888 como numpy array (para OpenCV / lane detection).
-    2. Los tensores de salida del modelo embebidos en los metadatos de la
-       captura (imx500.get_outputs).  Estos se parsean en objetos Detection.
+NPU strategy:
+  The IMX500 runs YOLOv8 inference directly on its integrated neural
+  accelerator (on-chip NPU). The Pi 5 receives:
+    1. The BGR888 frame as a numpy array (for OpenCV / lane detection).
+    2. The model output tensors embedded in the capture metadata
+       (imx500.get_outputs). These are parsed into Detection objects.
 
-  Beneficio: la CPU de la Pi 5 NO corre inferencia — solo parsea tensores
-  pequeños.  La RAM no se satura con modelos pesados cargados en Python.
+  Benefit: the Pi 5 CPU does NOT run inference -- it only parses small
+  tensors. RAM is not saturated by heavy models loaded in Python.
 
-Requisito en Raspberry Pi OS:
+Requirement on Raspberry Pi OS:
   sudo apt install imx500-all picamera2
 """
 

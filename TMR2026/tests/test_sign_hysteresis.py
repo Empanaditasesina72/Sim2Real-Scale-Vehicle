@@ -1,10 +1,9 @@
-"""
-test_sign_hysteresis.py — verifica que SignDetector._apply_hysteresis
-sólo publica una etiqueta tras aparecer en N frames consecutivos y la
-retira cuando deja de aparecer.  Sin hardware ni modelo cargado.
+"""Verify that SignDetector._apply_hysteresis only publishes a label after
+it appears in N consecutive frames, and removes it when it stops appearing.
+No hardware or loaded model.
 
-Pinhole: verifica que la distancia del bbox se calcula correctamente
-a partir de la altura de la caja.
+Pinhole: verify that the bbox distance is computed correctly from the box
+height.
 """
 
 from vision.sign_detector import (
@@ -27,7 +26,7 @@ def _make_sd(hyst=3) -> SignDetector:
 
 
 def _det(label="stop_sign", y1=100, y2=200):
-    """Fabrica una detección cruda con bbox controlado."""
+    """Build a raw detection with a controlled bbox."""
     return Detection(label, 0.9, 40, y1, 120, y2,
                      distance_m=None)
 
@@ -60,7 +59,7 @@ def test_hysteresis_resets_on_miss():
 
 
 def test_hysteresis_keeps_largest_bbox_per_frame():
-    """Si hay dos stops en el mismo frame, se conserva el más grande (más cerca)."""
+    """If there are two stops in the same frame, the largest (closest) is kept."""
     sd = _make_sd(hyst=1)
     small = Detection("stop_sign", 0.8, 10, 10,  40,  40, None)
     large = Detection("stop_sign", 0.8, 10, 10, 110, 110, None)

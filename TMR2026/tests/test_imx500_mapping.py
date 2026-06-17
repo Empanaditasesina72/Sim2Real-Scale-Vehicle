@@ -1,11 +1,10 @@
-"""
-test_imx500_mapping.py — verifica la parte PURA del backend NPU
-(vision/imx500_detector.py) sin necesitar picamera2 ni la cámara:
+"""Verify the PURE part of the NPU backend (vision/imx500_detector.py)
+without needing picamera2 or the camera:
 
-  1. map_raw_detections: tensores crudos → Detection con la misma semántica
-     que el camino CPU (stop→stop_sign, filtros de conf/área/clase, pinhole).
-  2. LabelHysteresis: confirma tras N frames, resetea al fallar uno,
-     conserva el bbox más grande del frame.
+  1. map_raw_detections: raw tensors -> Detection with the same semantics
+     as the CPU path (stop->stop_sign, conf/area/class filters, pinhole).
+  2. LabelHysteresis: confirms after N frames, resets on a missed one,
+     keeps the largest bbox of the frame.
 """
 
 from vision.imx500_detector import (
@@ -40,7 +39,7 @@ def test_all_seven_classes_map_with_their_own_height():
     for cls_id, name in enumerate(DEFAULT_LABELS):
         raw = [(0, 0, 60, 60, 0.9, cls_id)]
         out = map_raw_detections(raw, DEFAULT_LABELS, conf_min=0.55)
-        assert len(out) == 1, f"clase {name} no mapeó"
+        assert len(out) == 1, f"class {name} did not map"
         dets.append(out[0])
         expected = (SIGN_REAL_HEIGHT_M[name] * CAMERA_FOCAL_LENGTH_PX) / 60.0
         assert abs(out[0].distance_m - expected) < 1e-6
