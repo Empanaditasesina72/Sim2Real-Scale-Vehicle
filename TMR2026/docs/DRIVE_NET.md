@@ -167,7 +167,11 @@ directional arrow classes (left/right/straight) — a mirrored "left" arrow woul
 be mislabeled. The biggest accuracy win is adding real track photos of the signs
 to `traffic_lights/`, not more augmentation on the close-up set.
 
-GPU note: this PC has a GTX 1650 but ships CPU-only torch. Install a CUDA wheel
-(`--index-url https://download.pytorch.org/whl/cu121`) to train on the GPU.
-After retraining, regenerate both deploy exports (`export_model.py` NCNN +
-`export_imx500.py` rpk).
+GPU: CUDA is set up on this PC — `torch 2.12.0+cu126` on the GTX 1650, so
+`--device 0` works and `train_drive.py` / `train_signs.py` auto-select it. To
+reinstall on a fresh machine (Python 3.14):
+`pip install torch==2.12.0+cu126 torchvision==0.27.0+cu126 --index-url https://download.pytorch.org/whl/cu126`
+(cu128 has no torch 2.12 build). Note: `train_drive` is data-loading bound (the
+net is tiny) — add `--workers 4` to actually benefit; the GPU's big win is
+`train_signs` (YOLO, imgsz 640). After retraining, regenerate both deploy
+exports (`export_model.py` NCNN + `export_imx500.py` rpk).

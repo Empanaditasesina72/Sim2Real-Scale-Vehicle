@@ -15,11 +15,13 @@ Biggest real-world win: add actual track images of the signs (captured with
 tools/capture_track.py, labeled, merged into the dataset). Heavy augmentation
 on the close-up set alone only goes so far.
 
-GPU note: this PC has a GTX 1650 but the installed torch is CPU-only, so
-training falls back to CPU (slow). To use the GPU:
-    pip uninstall torch torchvision
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-(check that a CUDA wheel exists for your Python version), then --device 0.
+GPU: CUDA is set up on this PC (torch 2.12.0+cu126, GTX 1650). Training uses the
+GPU automatically (--device defaults to 0 when CUDA is present); this is where
+the big speedup is (imgsz 640 conv is compute-bound). If you ever need to
+reinstall it (fresh machine / Python 3.14):
+    pip install torch==2.12.0+cu126 torchvision==0.27.0+cu126 \
+        --index-url https://download.pytorch.org/whl/cu126
+(cu128 has no torch 2.12 build; cu126 is the right index for Python 3.14.)
 
 Usage:
     python TMR2026/tools/train_signs.py --epochs 120 --imgsz 640
