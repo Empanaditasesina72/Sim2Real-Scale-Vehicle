@@ -20,12 +20,14 @@ Two learned models, two destinations on the Pi:
 | **Infer** | **Pi + IMX500** (signs) · **Pi CPU** (DriveNet) |
 
 **Done so far (this machine):**
-- Built the full **DriveNet behavioral-cloning pipeline** (opt-in, `config.py:USE_DRIVE_NET=False`): `vision/drive_net.py` + tools `gen_synth_driving` / `record_driving` / `train_drive` / `test_drive_net` / `export_drive`, plus `tools/train_signs.py`. Docs: `TMR2026/docs/DRIVE_NET.md`. Validated end-to-end on synthetic data (val_RMSE 16.6 px). Commits `1b2c9b9`, `25010f0`.
+- Built the full **DriveNet behavioral-cloning pipeline** (opt-in, `config.py:USE_DRIVE_NET=False`): `vision/drive_net.py` + tools `gen_synth_driving` / `record_driving` / `train_drive` / `test_drive_net` / `export_drive`, plus `tools/train_signs.py`. Docs: `TMR2026/docs/DRIVE_NET.md`. Commits `1b2c9b9`, `25010f0`.
 - **Configured CUDA** on the PC GTX 1650: `pip install torch==2.12.0+cu126 torchvision==0.27.0+cu126 --index-url https://download.pytorch.org/whl/cu126`. `torch.cuda.is_available()==True`. (cu128 has no torch 2.12 build; cu126 is the right index for Python 3.14.)
+- **✅ Retrained the sign detector on the GPU** (`tools/train_signs.py`, data in `traffic_lights/`). Early-stopped at epoch 92 (best 62): val mAP@50 0.995, mAP@50-95 0.647, all 7 classes recall 1.0; held-out test @conf 0.55 → P 99.3 % / R 98.6 % / F1 99.0 %. Deployed `best.pt` → `weights/tmr_signs.pt` + regenerated NCNN. Commit `5fdb844`. **The `SignDetector(conf=0.55)` threshold is confirmed still optimal.** (Used `traffic_lights/data_local.yaml`, a gitignored copy of `data.yaml` with an absolute `path:` — the Roboflow `../train/images` resolves to the repo root, wrong.)
+- **✅ DriveNet GPU path validated + baseline trained.** Synthetic 4000/1000, `--workers 4` → best val_RMSE 14.7 px, eval RMSE 10.6 px. The `drive_net.pt` is synthetic-only (gitignored, NOT deployed; `USE_DRIVE_NET` stays False until real-data training). Also **fixed `train_drive.py`** so `--workers>0` works on Windows (moved `TubDataset` to module level — `<locals>` classes can't be pickled by spawn). Commit `e405e70`. Capture plan: `TMR2026/docs/DRIVE_NET_CAPTURE_PLAN.md` (commit `bf02372`).
 
 **Next steps:**
-1. **Retrain the sign detector on the GPU here** (`python TMR2026/tools/train_signs.py`, data already in `traffic_lights/`) → push → convert to `.rpk` on the Pi.
-2. **Capture driving data** for DriveNet (none exists yet): Unity sim (`record_driving.py --source sim`) or Pi camera (`capture_track.py` → `record_driving.py --source images`) → train on GPU → deploy to Pi CPU → set `USE_DRIVE_NET=True`.
+1. **Deploy the new detector to the Pi:** user `push` → Pi `pull` → on the Pi `python tools/export_imx500.py` → `.rpk` for the NPU (15–60 min). `config.py:USE_IMX500_NPU` is already `True`, so once the `.rpk` exists the NPU path activates automatically on the next `main.py`; test in VISION `--display`, tune `config.py:IMX500_CONF` (0.55).
+2. **Capture real DriveNet driving data** (none exists yet — the only blocker for the steering model). Follow `TMR2026/docs/DRIVE_NET_CAPTURE_PLAN.md`: Pi camera (`capture_track.py` → `record_driving.py --source images`) or Unity sim → train on GPU here (`train_drive.py --device cuda --workers 4`) → fine-tune over the synthetic baseline → deploy to Pi CPU → set `USE_DRIVE_NET=True`.
 
 **Standing decision:** all training stays on the PC (GPU); the Pi is for conversion, on-track testing and running the car.
 
