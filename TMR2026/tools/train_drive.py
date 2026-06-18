@@ -38,6 +38,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import torch
 
 HERE = Path(__file__).resolve().parent
 TMR_ROOT = HERE.parent
@@ -111,32 +112,30 @@ def augment(img, error_px, norm_px, rng):
     return img, error_px
 
 
-def make_dataset_cls():
-    import torch
+# Module-level (not nested in a factory) so DataLoader workers can pickle it on
+# Windows' spawn start method -> --workers > 0 works there. The per-instance rng
+# keeps augmentation reproducible.
+class TubDataset(torch.utils.data.Dataset):
+    def __init__(self, samples, norm_px, img_w, img_h, roi_frac, train, seed=0):
+        self.samples = samples
+        self.norm_px = norm_px
+        self.img_w, self.img_h, self.roi_frac = img_w, img_h, roi_frac
+        self.train = train
+        self.rng = np.random.default_rng(seed)
 
-    class TubDataset(torch.utils.data.Dataset):
-        def __init__(self, samples, norm_px, img_w, img_h, roi_frac, train, seed=0):
-            self.samples = samples
-            self.norm_px = norm_px
-            self.img_w, self.img_h, self.roi_frac = img_w, img_h, roi_frac
-            self.train = train
-            self.rng = np.random.default_rng(seed)
+    def __len__(self):
+        return len(self.samples)
 
-        def __len__(self):
-            return len(self.samples)
-
-        def __getitem__(self, i):
-            path, err, conf = self.samples[i]
-            img = cv2.imread(path)
-            if img is None:
-                img = np.zeros((self.img_h * 4, self.img_w * 2, 3), np.uint8)
-            if self.train:
-                img, err = augment(img, err, self.norm_px, self.rng)
-            x = preprocess(img, self.img_w, self.img_h, self.roi_frac)
-            y = np.array([err / self.norm_px, conf], dtype=np.float32)
-            return torch.from_numpy(x), torch.from_numpy(y)
-
-    return TubDataset
+    def __getitem__(self, i):
+        path, err, conf = self.samples[i]
+        img = cv2.imread(path)
+        if img is None:
+            img = np.zeros((self.img_h * 4, self.img_w * 2, 3), np.uint8)
+        if self.train:
+            img, err = augment(img, err, self.norm_px, self.rng)
+        x = preprocess(img, self.img_w, self.img_h, self.roi_frac)
+        y = np.array([err / self.norm_px, conf], dtype=np.float32)
+        return torch.from_numpy(x), torch.from_numpy(y)
 
 
 def main() -> None:
@@ -158,7 +157,6 @@ def main() -> None:
     ap.add_argument("--no-aug", action="store_true")
     args = ap.parse_args()
 
-    import torch
     import torch.nn.functional as F
 
     device = ("cuda" if torch.cuda.is_available() else "cpu") \
@@ -183,7 +181,6 @@ def main() -> None:
     print(f"[TRAIN] device={device}  train={len(train_samples)}  val={len(val_samples)}")
     print(f"[TRAIN] img={args.img_w}x{args.img_h}  norm_px={args.norm_px}  aug={not args.no_aug}")
 
-    TubDataset = make_dataset_cls()
     tr_ds = TubDataset(train_samples, args.norm_px, args.img_w, args.img_h,
                        ROI_FRAC, train=not args.no_aug, seed=args.seed)
     va_ds = TubDataset(val_samples, args.norm_px, args.img_w, args.img_h,

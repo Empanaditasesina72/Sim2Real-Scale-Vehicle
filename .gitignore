@@ -25,7 +25,7 @@ TMR2026/validation_results_parking/
 # ── Logs y artefactos de entrenamiento ───────────────────────────────────
 TMR2026/logs/
 runs/
-runs_train_signs.log
+runs_train_*.log
 # Copia local del data.yaml con ruta ABSOLUTA (solo válida en esta PC).
 traffic_lights/data_local.yaml
 
