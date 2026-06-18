@@ -25,6 +25,9 @@ TMR2026/validation_results_parking/
 # ── Logs y artefactos de entrenamiento ───────────────────────────────────
 TMR2026/logs/
 runs/
+runs_train_signs.log
+# Copia local del data.yaml con ruta ABSOLUTA (solo válida en esta PC).
+traffic_lights/data_local.yaml
 
 # ── DriveNet datasets + trained artifacts (regenerable, can be large) ─────
 # Tubs (synthetic/recorded) and demo weights are produced by the DriveNet
