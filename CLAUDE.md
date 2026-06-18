@@ -2,6 +2,33 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Current focus & roadmap (updated 2026-06-18 — read this first when resuming)
+
+**Goal:** make the car drive any basic road-like ("carretera") track *and* read its signs, with both models running on the Pi for the TMR competition.
+
+Two learned models, two destinations on the Pi:
+- **Sign detection** (YOLO `tmr_signs`) → runs on the **IMX500 NPU** (inside the camera, ~0 % CPU).
+- **Steering** (`DriveNet`, behavioral cloning) → runs on the **Pi CPU** (tiny, ~1 MB). The IMX500 holds **one** model at a time, so it stays on signs; DriveNet never shares the NPU.
+
+**Train here, deploy there** (the NPU and the Pi CANNOT train — the IMX500 is inference-only and the Pi 5 has no CUDA GPU):
+
+| Stage | Machine |
+|---|---|
+| **TRAIN** (`.pt`) | **PC + GTX 1650** — CUDA is set up: `torch 2.12.0+cu126` |
+| Move weights | git: PC commits → user `push` → Pi `pull` |
+| **Convert** `.pt`→`.rpk` | **Pi** (`tools/export_imx500.py`, Sony Linux-only toolchain, 15–60 min) |
+| **Infer** | **Pi + IMX500** (signs) · **Pi CPU** (DriveNet) |
+
+**Done so far (this machine):**
+- Built the full **DriveNet behavioral-cloning pipeline** (opt-in, `config.py:USE_DRIVE_NET=False`): `vision/drive_net.py` + tools `gen_synth_driving` / `record_driving` / `train_drive` / `test_drive_net` / `export_drive`, plus `tools/train_signs.py`. Docs: `TMR2026/docs/DRIVE_NET.md`. Validated end-to-end on synthetic data (val_RMSE 16.6 px). Commits `1b2c9b9`, `25010f0`.
+- **Configured CUDA** on the PC GTX 1650: `pip install torch==2.12.0+cu126 torchvision==0.27.0+cu126 --index-url https://download.pytorch.org/whl/cu126`. `torch.cuda.is_available()==True`. (cu128 has no torch 2.12 build; cu126 is the right index for Python 3.14.)
+
+**Next steps:**
+1. **Retrain the sign detector on the GPU here** (`python TMR2026/tools/train_signs.py`, data already in `traffic_lights/`) → push → convert to `.rpk` on the Pi.
+2. **Capture driving data** for DriveNet (none exists yet): Unity sim (`record_driving.py --source sim`) or Pi camera (`capture_track.py` → `record_driving.py --source images`) → train on GPU → deploy to Pi CPU → set `USE_DRIVE_NET=True`.
+
+**Standing decision:** all training stays on the PC (GPU); the Pi is for conversion, on-track testing and running the car.
+
 ## Active system: TMR2026/
 
 Everything under `TMR2026/` is the current vehicle. Legacy prototypes live in `_legacy/` and must not be imported from TMR2026. Project-wide docs (architecture diagram + generator) live in `docs/`; TMR2026-specific docs (SETUP, Sim2Real protocol, calibration, professor deliveries) live in `TMR2026/docs/`.
