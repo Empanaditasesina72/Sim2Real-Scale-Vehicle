@@ -25,3 +25,15 @@ TMR2026/validation_results_parking/
 # ── Logs y artefactos de entrenamiento ───────────────────────────────────
 TMR2026/logs/
 runs/
+
+# ── DriveNet datasets + trained artifacts (regenerable, can be large) ─────
+# Tubs (synthetic/recorded) and demo weights are produced by the DriveNet
+# tools; only the code is versioned. See TMR2026/docs/DRIVE_NET.md.
+TMR2026/datasets/
+TMR2026/weights/drive_net.pt
+TMR2026/weights/drive_net.json
+TMR2026/weights/drive_net.torchscript
+TMR2026/weights/drive_net.onnx
+TMR2026/weights/drive_net.ncnn.*
+TMR2026/weights/drive_eval.png
+TMR2026/weights/drive_train.png

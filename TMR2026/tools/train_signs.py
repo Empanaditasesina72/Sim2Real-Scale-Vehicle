@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Retrain the traffic-sign detector for robustness / track generalization.
+
+Fine-tunes weights/tmr_signs.pt (the validated 7-class model) on
+traffic_lights/data.yaml with a generalization-focused augmentation recipe, so
+the detector survives the real track's distance, lighting and motion blur
+instead of only the close-up Roboflow shots.
+
+CRITICAL for THIS dataset: the classes include directional arrows
+(left / right / straight). Horizontal and vertical flips are therefore DISABLED
+(fliplr=flipud=0): a mirrored "left" arrow looks like "right" but keeps the
+"left" label, which would poison training. Do not turn flips back on.
+
+Biggest real-world win: add actual track images of the signs (captured with
+tools/capture_track.py, labeled, merged into the dataset). Heavy augmentation
+on the close-up set alone only goes so far.
+
+GPU note: this PC has a GTX 1650 but the installed torch is CPU-only, so
+training falls back to CPU (slow). To use the GPU:
+    pip uninstall torch torchvision
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+(check that a CUDA wheel exists for your Python version), then --device 0.
+
+Usage:
+    python TMR2026/tools/train_signs.py --epochs 120 --imgsz 640
+    python TMR2026/tools/train_signs.py --model weights/tmr_signs.pt --device 0
+    python TMR2026/tools/train_signs.py --data traffic_lights/data.yaml --batch 16
+
+After training, copy the best weights and regenerate BOTH deploy exports:
+    cp runs/train_signs/.../weights/best.pt TMR2026/weights/tmr_signs.pt
+    python TMR2026/tools/export_model.py        # NCNN
+    python TMR2026/tools/export_imx500.py        # rpk (on the Pi)
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+TMR_ROOT = HERE.parent
+REPO_ROOT = TMR_ROOT.parent
+
+DEFAULT_DATA = REPO_ROOT / "traffic_lights" / "data.yaml"
+DEFAULT_MODEL = TMR_ROOT / "weights" / "tmr_signs.pt"
+
+GENERALIZATION_AUG = dict(
+    hsv_h=0.015, hsv_s=0.7, hsv_v=0.4,
+    degrees=8.0, translate=0.12, scale=0.6, shear=2.0, perspective=0.0005,
+    flipud=0.0, fliplr=0.0,
+    mosaic=1.0, close_mosaic=10, mixup=0.10, copy_paste=0.0,
+    erasing=0.4, auto_augment="randaugment",
+)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", default=str(DEFAULT_DATA))
+    ap.add_argument("--model", default=str(DEFAULT_MODEL),
+                    help="base weights to fine-tune (falls back to yolov8n.pt)")
+    ap.add_argument("--epochs", type=int, default=120)
+    ap.add_argument("--imgsz", type=int, default=640)
+    ap.add_argument("--batch", type=int, default=16)
+    ap.add_argument("--device", default="", help="'0' for GPU, 'cpu', '' = auto")
+    ap.add_argument("--patience", type=int, default=30)
+    ap.add_argument("--name", default="train_signs")
+    ap.add_argument("--project", default=str(REPO_ROOT / "runs"))
+    args = ap.parse_args()
+
+    if not Path(args.data).exists():
+        print(f"ERROR: data yaml not found: {args.data}")
+        sys.exit(1)
+
+    base = args.model if Path(args.model).exists() else "yolov8n.pt"
+    if base != args.model:
+        print(f"[TRAIN] {args.model} not found -> training from {base}")
+
+    from ultralytics import YOLO
+    import torch
+
+    device = args.device
+    if device == "":
+        device = "0" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        print("[TRAIN] WARNING: training on CPU (no CUDA torch). This is slow; "
+              "see the GPU note at the top of this file.")
+
+    print(f"[TRAIN] base={base}  data={args.data}  imgsz={args.imgsz}  "
+          f"epochs={args.epochs}  device={device}")
+    print(f"[TRAIN] flips DISABLED (directional arrow classes)")
+
+    model = YOLO(base)
+    model.train(
+        data=args.data,
+        epochs=args.epochs,
+        imgsz=args.imgsz,
+        batch=args.batch,
+        device=device,
+        patience=args.patience,
+        project=args.project,
+        name=args.name,
+        **GENERALIZATION_AUG,
+    )
+
+    best = Path(args.project) / args.name / "weights" / "best.pt"
+    print(f"\n[TRAIN] done. best weights: {best}")
+    print("[TRAIN] To deploy:")
+    print(f"   copy {best} -> {DEFAULT_MODEL}")
+    print("   python TMR2026/tools/export_model.py     # regenerate NCNN")
+    print("   python TMR2026/tools/export_imx500.py    # regenerate rpk (on the Pi)")
+
+
+if __name__ == "__main__":
+    main()

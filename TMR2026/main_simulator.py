@@ -54,6 +54,7 @@ from config import (
     SERVO_CENTER_ANGLE as SERVO_CENTER,
     SERVO_MIN_ANGLE    as SERVO_MIN,
     SERVO_MAX_ANGLE    as SERVO_MAX,
+    USE_DRIVE_NET, DRIVE_NET_WEIGHTS, DRIVE_NET_CONF_MIN,
 )
 
 LOOP_HZ           = 50
@@ -189,6 +190,19 @@ class VehicleSimulator:
             hsv_white_lo=[0, 0, 200],
             hsv_white_hi=[179, 40, 255],
         )
+        if USE_DRIVE_NET:
+            from pathlib import Path as _Path
+            if _Path(DRIVE_NET_WEIGHTS).exists():
+                try:
+                    from vision.drive_net import DriveNet
+                    self.lane_pipe = DriveNet(DRIVE_NET_WEIGHTS,
+                                              conf_min=DRIVE_NET_CONF_MIN,
+                                              debug=_DISPLAY)
+                    print(f"[SIM] DriveNet steering ENABLED ({DRIVE_NET_WEIGHTS})")
+                except Exception as e:
+                    print(f"[SIM] DriveNet unavailable ({e}); classic LanePipeline")
+            else:
+                print(f"[SIM] USE_DRIVE_NET set but {DRIVE_NET_WEIGHTS} missing")
         self.sign_det = SignDetector(
             model_path="weights/tmr_signs.pt",
             conf=0.55,

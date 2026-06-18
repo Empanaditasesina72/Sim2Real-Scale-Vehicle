@@ -122,6 +122,15 @@ These are full implementations kept for future wiring. Treat as library code:
 - `_legacy/runs/detect/train2/weights/` — source of the active model (checkpoint + training artifacts).
 - `_legacy/runs/detect/train/weights/best.pt` — larger variant (~18 MB) kept as backup.
 - `traffic_lights/` — Roboflow v9 dataset (1470 close-up sign images, no track photos). Use to re-train if adding a `crosswalk` class.
+- **Sign-detector retraining**: `tools/train_signs.py` fine-tunes `tmr_signs.pt` with generalization augmentation. Flips are disabled on purpose (`fliplr=flipud=0`) — directional arrow classes (left/right/straight) would be mislabeled by mirroring. Auto-selects CUDA; this PC's torch is CPU-only (GTX 1650 unused until a CUDA wheel is installed).
+
+## Learned steering (DriveNet, opt-in behavioral cloning)
+
+An optional CNN replacement for the classic lane follower. `vision/drive_net.py:DriveNet` predicts `error_px` with the **same `.process()`/`.draw_debug()` contract as `LanePipeline`**, so it is a true drop-in — the FSM, PID, sign gating and lights are untouched. Enabled by `config.py:USE_DRIVE_NET` (default **False**); `main.py:_maybe_drive_net()` and `main_simulator.py` swap it in only if the flag is set AND `weights/drive_net.pt` exists, else they keep the classic pipeline (Sim2Real parity preserved).
+
+- It is behavioral cloning: it **cannot train without `(image → error_px)` data**. Sources: the Unity sim and/or the classic pipeline as an auto-labeling teacher.
+- Pipeline tools (all share one tub format `frames/ + labels.csv`): `tools/gen_synth_driving.py` (synthetic, no hardware), `tools/record_driving.py` (sim/camera/video/images), `tools/train_drive.py` (augmentation → `weights/drive_net.pt` + `.json` meta), `tools/test_drive_net.py` (eval, no GPIO), `tools/export_drive.py` (TorchScript/ONNX/NCNN).
+- `weights/drive_net.*` and `TMR2026/datasets/` are gitignored (regenerable; the committed demo would be synthetic-only). Full workflow: `TMR2026/docs/DRIVE_NET.md`.
 
 ## Hard rules (don't break these)
 

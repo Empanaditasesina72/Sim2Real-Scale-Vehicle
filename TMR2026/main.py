@@ -75,6 +75,7 @@ from config import (
     AXIS_STEER, AXIS_THROTTLE, AXIS_BRAKE,
     JOYSTICK_DEADBAND as DEADBAND,
     USE_IMX500_NPU, IMX500_RPK_PATH, IMX500_LABELS_PATH, IMX500_CONF,
+    USE_DRIVE_NET, DRIVE_NET_WEIGHTS, DRIVE_NET_CONF_MIN,
 )
 
 LOOP_HZ           = 50
@@ -186,6 +187,7 @@ class VehicleTMR:
         self.lane_pipe = LanePipeline(
             frame_w=CAMERA_W, frame_h=CAMERA_H, debug=_DISPLAY
         )
+        self.lane_pipe = self._maybe_drive_net(self.lane_pipe)
 
         self.pid = PIDController(
             kp=PID_KP, ki=PID_KI, kd=PID_KD,
@@ -220,6 +222,31 @@ class VehicleTMR:
 
         print("[INIT] Hardware ready. Waiting for the Bluetooth gamepad...")
 
+
+    def _maybe_drive_net(self, classic_pipe):
+        """Opt-in swap of the classic lane follower for the learned DriveNet.
+
+        Controlled by config.py:USE_DRIVE_NET (default False -> no change). The
+        returned object honours the same .process()/.draw_debug() contract, so
+        the FSM, PID, sign gating and lights are untouched. Any failure (missing
+        weights, missing torch) silently keeps the classic LanePipeline.
+        """
+        if not USE_DRIVE_NET:
+            return classic_pipe
+        from pathlib import Path
+        if not Path(DRIVE_NET_WEIGHTS).exists():
+            print(f"[INIT] USE_DRIVE_NET set but {DRIVE_NET_WEIGHTS} missing; "
+                  f"using classic LanePipeline")
+            return classic_pipe
+        try:
+            from vision.drive_net import DriveNet
+            net = DriveNet(DRIVE_NET_WEIGHTS, conf_min=DRIVE_NET_CONF_MIN,
+                           debug=_DISPLAY)
+            print(f"[INIT] DriveNet steering ENABLED ({DRIVE_NET_WEIGHTS})")
+            return net
+        except Exception as e:
+            print(f"[INIT] DriveNet unavailable ({e}); using classic LanePipeline")
+            return classic_pipe
 
     def _build_vision(self):
         """
