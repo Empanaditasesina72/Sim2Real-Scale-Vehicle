@@ -28,6 +28,10 @@ runs/
 runs_train_*.log
 # Copia local del data.yaml con ruta ABSOLUTA (solo válida en esta PC).
 traffic_lights/data_local.yaml
+# Ídem pero con ruta absoluta de WSL (para el export IMX500 en WSL).
+traffic_lights/data_wsl.yaml
+# Artefactos intermedios del export IMX500 (packerOut.zip, onnx, etc.).
+TMR2026/weights/tmr_signs_imx_model/
 
 # ── DriveNet datasets + trained artifacts (regenerable, can be large) ─────
 # Tubs (synthetic/recorded) and demo weights are produced by the DriveNet

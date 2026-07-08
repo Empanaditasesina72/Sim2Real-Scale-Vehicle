@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current focus & roadmap (updated 2026-06-18 — read this first when resuming)
+## Current focus & roadmap (updated 2026-07-07 — read this first when resuming)
 
 **Goal:** make the car drive any basic road-like ("carretera") track *and* read its signs, with both models running on the Pi for the TMR competition.
 
@@ -15,8 +15,8 @@ Two learned models, two destinations on the Pi:
 | Stage | Machine |
 |---|---|
 | **TRAIN** (`.pt`) | **PC + GTX 1650** — CUDA is set up: `torch 2.12.0+cu126` |
-| Move weights | git: PC commits → user `push` → Pi `pull` |
-| **Convert** `.pt`→`.rpk` | **Pi** (`tools/export_imx500.py`, Sony Linux-only toolchain, 15–60 min) |
+| Move weights | git: PC commits → `push` → Pi `pull` (or `git push pi main` over LAN — remote `pi`, much faster than the Pi pulling GitHub) |
+| **Convert** `.pt`→`.rpk` | **PC WSL Ubuntu** (quantize) + **Pi** (`imx500-package`). The Pi can NO LONGER run the full converter: Sony's `uni-pytorch` needs Python <3.13 and the Pi has 3.13.5. See "IMX500 conversion (2026-07-07 procedure)" below. |
 | **Infer** | **Pi + IMX500** (signs) · **Pi CPU** (DriveNet) |
 
 **Done so far (this machine):**
@@ -25,8 +25,15 @@ Two learned models, two destinations on the Pi:
 - **✅ Retrained the sign detector on the GPU** (`tools/train_signs.py`, data in `traffic_lights/`). Early-stopped at epoch 92 (best 62): val mAP@50 0.995, mAP@50-95 0.647, all 7 classes recall 1.0; held-out test @conf 0.55 → P 99.3 % / R 98.6 % / F1 99.0 %. Deployed `best.pt` → `weights/tmr_signs.pt` + regenerated NCNN. Commit `5fdb844`. **The `SignDetector(conf=0.55)` threshold is confirmed still optimal.** (Used `traffic_lights/data_local.yaml`, a gitignored copy of `data.yaml` with an absolute `path:` — the Roboflow `../train/images` resolves to the repo root, wrong.)
 - **✅ DriveNet GPU path validated + baseline trained.** Synthetic 4000/1000, `--workers 4` → best val_RMSE 14.7 px, eval RMSE 10.6 px. The `drive_net.pt` is synthetic-only (gitignored, NOT deployed; `USE_DRIVE_NET` stays False until real-data training). Also **fixed `train_drive.py`** so `--workers>0` works on Windows (moved `TubDataset` to module level — `<locals>` classes can't be pickled by spawn). Commit `e405e70`. Capture plan: `TMR2026/docs/DRIVE_NET_CAPTURE_PLAN.md` (commit `bf02372`).
 
+- **✅ Detector deployed to the Pi + `.rpk` generated (2026-07-07).** SSH access to the Pi works from this PC (`ssh angel01@192.168.1.71`, key auth; repo at `~/Carrito`). Pi synced to `9b163a6` via LAN push (remote `pi`; the Pi's GitHub pull was crawling). The `.rpk` is installed at `~/Carrito/TMR2026/weights/tmr_signs_imx500.rpk` (3 MB) + labels file; `USE_IMX500_NPU=True` so the NPU path activates on the next `main.py` start. NOT yet smoke-tested on the car.
+
+**IMX500 conversion (2026-07-07 procedure — `tools/export_imx500.py` on the Pi is BROKEN, Python 3.13):**
+1. On the PC, WSL Ubuntu has the toolchain ready: venv `~/imx_venv` (Python 3.12, torch CPU, ultralytics, model-compression-toolkit, imx500-converter[pt]) + portable JRE at `~/jre`. Calibration yaml: `traffic_lights/data_wsl.yaml` (gitignored, WSL-absolute `path:`).
+2. Run the export in WSL (quantizes INT8 + converts, ~18 min): loads `weights/tmr_signs.pt`, `model.export(format="imx", data=data_wsl.yaml, fraction=0.25)` → `weights/tmr_signs_imx_model/packerOut.zip` (+ `labels.txt`). Ultralytics does NOT produce the `.rpk` itself (that needs `imx500-package`, only packaged for Pi OS).
+3. `scp packerOut.zip labels.txt angel01@192.168.1.71:/tmp/`, then on the Pi: `imx500-package -i /tmp/packerOut.zip -o /tmp/rpk_out` (seconds; needs apt `imx500-tools` + `default-jre`, already installed) → copy `network.rpk` to `~/Carrito/TMR2026/weights/tmr_signs_imx500.rpk` and labels to `tmr_signs_imx500_labels.txt`.
+
 **Next steps:**
-1. **Deploy the new detector to the Pi:** user `push` → Pi `pull` → on the Pi `python tools/export_imx500.py` → `.rpk` for the NPU (15–60 min). `config.py:USE_IMX500_NPU` is already `True`, so once the `.rpk` exists the NPU path activates automatically on the next `main.py`; test in VISION `--display`, tune `config.py:IMX500_CONF` (0.55).
+1. **Smoke-test the NPU on the car:** `python main.py --display`, enter VISION, expect `[VISION] Backend: IMX500 NPU (on-chip inference)`; tune `config.py:IMX500_CONF` (0.55) on track.
 2. **Capture real DriveNet driving data** (none exists yet — the only blocker for the steering model). Follow `TMR2026/docs/DRIVE_NET_CAPTURE_PLAN.md`: Pi camera (`capture_track.py` → `record_driving.py --source images`) or Unity sim → train on GPU here (`train_drive.py --device cuda --workers 4`) → fine-tune over the synthetic baseline → deploy to Pi CPU → set `USE_DRIVE_NET=True`.
 
 **Standing decision:** all training stays on the PC (GPU); the Pi is for conversion, on-track testing and running the car.
