@@ -1,0 +1,11 @@
+# Treat binary assets as binary so git never applies line-ending conversion.
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.pt    binary
+*.bin   binary
+*.rpk   binary
+*.torchscript binary
+*.onnx  binary
+*.cache binary
