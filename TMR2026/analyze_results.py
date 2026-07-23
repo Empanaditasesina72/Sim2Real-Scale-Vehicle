@@ -57,13 +57,13 @@ def fig_latency():
     plt.figure(figsize=(9, 4.5))
     plt.plot(t, lat, lw=1.0, color="#2C7BE5", label="latency per cycle")
     plt.axhline(avg, color="#00A36C", ls="--", label=f"mean {avg:.1f} ms")
-    plt.axhline(200, color="#E55", ls=":", label="target 200 ms")
+    plt.axhline(20, color="#E55", ls=":", label="deadline 20 ms (50 Hz)")
     plt.xlabel("Time (s)")
     plt.ylabel("Perception-to-actuation loop latency (ms)")
     plt.title("Test 1: Control-loop latency")
     plt.legend(); plt.grid(alpha=0.3); plt.tight_layout()
     out = os.path.join(DIR, "fig1_latency.png")
-    plt.savefig(out, dpi=130); plt.close()
+    plt.savefig(out, dpi=300); plt.close()
     print(f"  [OK] {out}  (avg {avg:.1f} ms)")
 
 
@@ -95,7 +95,7 @@ def fig_braking():
     ax1.legend(l1 + l2, lab1 + lab2, loc="upper right")
     plt.tight_layout()
     out = os.path.join(DIR, "fig2_braking.png")
-    plt.savefig(out, dpi=130); plt.close()
+    plt.savefig(out, dpi=300); plt.close()
     print(f"  [OK] {out}")
 
 
@@ -126,7 +126,7 @@ def fig_fsm():
     plt.title("Test 3: State Machine timeline")
     plt.grid(alpha=0.3, axis="x"); plt.tight_layout()
     out = os.path.join(DIR, "fig3_fsm.png")
-    plt.savefig(out, dpi=130); plt.close()
+    plt.savefig(out, dpi=300); plt.close()
     print(f"  [OK] {out}")
 
 
