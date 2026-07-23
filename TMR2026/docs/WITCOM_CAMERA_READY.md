@@ -179,3 +179,43 @@ Optional: print **red/green/yellow traffic-light cards** to also test those clas
 
 **Next actions:** (1) later today run Steps 1–2 on the Pi/car → real numbers;
 (2) in the chat, upload the manuscript and start §1's *chat* items in parallel.
+
+---
+
+## 8. Reproducibility & DOI (reviewers 2 & 3)
+
+**Order matters** — Zenodo only mints a DOI for releases created *after* you
+connect it. Do the FINAL release once the camera-ready code is frozen.
+
+1. **Add `CITATION.cff`** at the repo root (fill surname + license):
+```yaml
+cff-version: 1.2.0
+message: "If you use this software, please cite it."
+title: "Sim2Real-Scale-Vehicle: Monolithic Edge AI Autonomous Navigation (TMR 2026)"
+authors:
+  - given-names: Angel Emmanuel
+    family-names: "<your surname>"
+    email: carreraangel55555@gmail.com
+repository-code: "https://github.com/Robotics-TESE/Sim2Real-Scale-Vehicle"
+license: "<choose, e.g. MIT>"
+version: v1.0.0
+date-released: 2026-07-31
+```
+2. **Connect Zenodo:** log in at zenodo.org with GitHub → *GitHub* settings →
+   toggle **ON** the `Robotics-TESE/Sim2Real-Scale-Vehicle` repo.
+3. **Create the release** (when the paper code is final) — I can run this for you:
+```bash
+git tag -a v1.0.0 -m "WITCOM 2026 camera-ready"
+git push org v1.0.0
+gh release create v1.0.0 --repo Robotics-TESE/Sim2Real-Scale-Vehicle \
+  --title "WITCOM 2026 camera-ready" --notes "Camera-ready snapshot (Paper 2069)."
+```
+4. Zenodo auto-mints the DOI; put the DOI badge in the README and cite it in the
+   paper's reproducibility statement.
+
+> Not created yet on purpose — the "permanent release" should be the final
+> version. Say the word when the code is frozen and I run step 3.
+
+**Also report for reproducibility:** Python version, Ultralytics/OpenCV versions,
+Unity version (6000.4), and the calibration file `track_calib.json`. A dependency
+freeze: `pip freeze > TMR2026/requirements-lock.txt`.
