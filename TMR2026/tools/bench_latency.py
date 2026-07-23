@@ -17,6 +17,12 @@ Formal latency definition (state this verbatim in the paper):
     L is the CPU work the Pi 5 performs each 50 Hz (20 ms) control cycle.
     A cycle "misses the deadline" when L > 20 ms.
 
+Modes:
+    (default)      real camera + detector on the Pi.
+    --synthetic    no hardware: times lane+PID on a generated frame. Use it to
+                   validate the harness on any machine and to report the pure
+                   perception+control compute latency (the dominant term).
+
 Output:
     validation_results/bench_latency_pi.csv   (per-cycle, latency_ms column)
 Then analyse the distribution with:
@@ -24,8 +30,9 @@ Then analyse the distribution with:
            --deadline 20 --label "Pi 5 + IMX500 (on-device)"
 
 Usage (from TMR2026/):
-    python tools/bench_latency.py                 # 3000 cycles, ~60 s
+    python tools/bench_latency.py                       # 3000 cycles on the Pi
     python tools/bench_latency.py --cycles 6000 --hz 50
+    python tools/bench_latency.py --synthetic           # PC dry-run / compute-only
 """
 
 from __future__ import annotations
@@ -41,6 +48,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import cv2
 import numpy as np
 
 from config import (
@@ -63,6 +71,14 @@ def _pi_temp_c():
         return float(out.strip().split("=")[1].split("'")[0])
     except Exception:
         return None
+
+
+def _synthetic_frame() -> np.ndarray:
+    """A black frame with two white lane lines, so LanePipeline does real work."""
+    img = np.zeros((CAMERA_H, CAMERA_W, 3), dtype=np.uint8)
+    cv2.line(img, (210, CAMERA_H), (255, CAMERA_H // 2), (255, 255, 255), 8)
+    cv2.line(img, (430, CAMERA_H), (395, CAMERA_H // 2), (255, 255, 255), 8)
+    return img
 
 
 def _build_vision():
@@ -91,14 +107,16 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--cycles", type=int, default=3000, help="control cycles to time")
     ap.add_argument("--hz", type=float, default=50.0, help="target loop rate")
+    ap.add_argument("--synthetic", action="store_true",
+                    help="no hardware: time lane+PID on a generated frame")
     ap.add_argument("--out", default=None, help="output CSV path")
     args = ap.parse_args()
 
     deadline_ms = 1000.0 / args.hz
-    out = args.out or str(ROOT / "validation_results" / "bench_latency_pi.csv")
+    default_name = "bench_latency_synthetic.csv" if args.synthetic else "bench_latency_pi.csv"
+    out = args.out or str(ROOT / "validation_results" / default_name)
     os.makedirs(os.path.dirname(out), exist_ok=True)
 
-    camera, sign_det, backend = _build_vision()
     lane_pipe = LanePipeline(frame_w=CAMERA_W, frame_h=CAMERA_H, debug=False)
     pid = PIDController(
         kp=PID_KP, ki=PID_KI, kd=PID_KD, setpoint=0.0,
@@ -106,17 +124,25 @@ def main() -> int:
         integral_limits=(-25.0, 25.0),
     )
 
-    camera.start()
-    if sign_det is not camera:
-        sign_det.start()
-
-    print(f"[BENCH] Warming up... backend={backend}  temp={_pi_temp_c()} C")
-    t_wait = time.monotonic()
-    while camera.get_frame() is None and time.monotonic() - t_wait < 10:
-        time.sleep(0.05)
-    if camera.get_frame() is None:
-        print("[BENCH] ERROR: no camera frames. Is the camera connected?")
-        return 1
+    if args.synthetic:
+        backend = "synthetic (compute-only)"
+        camera = sign_det = None
+        synth = _synthetic_frame()
+        get_frame = lambda: synth
+        print("[BENCH] Backend: synthetic frame (no camera, lane+PID only)")
+    else:
+        camera, sign_det, backend = _build_vision()
+        camera.start()
+        if sign_det is not camera:
+            sign_det.start()
+        print(f"[BENCH] Warming up... backend={backend}  temp={_pi_temp_c()} C")
+        t_wait = time.monotonic()
+        while camera.get_frame() is None and time.monotonic() - t_wait < 10:
+            time.sleep(0.05)
+        if camera.get_frame() is None:
+            print("[BENCH] ERROR: no camera frames. Is the camera connected?")
+            return 1
+        get_frame = camera.get_frame
 
     rows = []
     period = 1.0 / args.hz
@@ -127,7 +153,7 @@ def main() -> int:
           f"(deadline {deadline_ms:.1f} ms)...")
     for i in range(args.cycles):
         c0 = time.perf_counter()
-        frame = camera.get_frame()
+        frame = get_frame()
         c1 = time.perf_counter()
         if frame is None:
             time.sleep(period); continue
@@ -135,37 +161,33 @@ def main() -> int:
         lane = lane_pipe.process(frame)
         c2 = time.perf_counter()
 
-        if sign_det is not camera:
-            sign_det.update_frame(frame)
-        stop_like = sign_det.has_sign("stop_sign") or sign_det.has_sign("red")
-        _ = sign_det.closest_sign("stop_sign") or sign_det.closest_sign("red")
+        if sign_det is not None:
+            if sign_det is not camera:
+                sign_det.update_frame(frame)
+            stop_like = sign_det.has_sign("stop_sign") or sign_det.has_sign("red")  # noqa: F841
+            _ = sign_det.closest_sign("stop_sign") or sign_det.closest_sign("red")
         c3 = time.perf_counter()
 
         corr = pid.compute(lane.error_px, period)
         servo_cmd = max(SERVO_MIN, min(SERVO_MAX, SERVO_CENTER + corr))  # noqa: F841
         c4 = time.perf_counter()
 
-        rows.append((
-            i,
-            (c1 - c0) * 1000.0,
-            (c2 - c1) * 1000.0,
-            (c3 - c2) * 1000.0,
-            (c4 - c3) * 1000.0,
-            (c4 - c0) * 1000.0,
-        ))
+        rows.append((i, (c1 - c0) * 1000.0, (c2 - c1) * 1000.0,
+                     (c3 - c2) * 1000.0, (c4 - c3) * 1000.0, (c4 - c0) * 1000.0))
 
         dt = time.monotonic() - t_last
         if dt < period:
             time.sleep(period - dt)
         t_last = time.monotonic()
 
-        if i % 500 == 0 and i:
+        if i % 500 == 0 and i and not args.synthetic:
             print(f"  ... {i}/{args.cycles}  temp={_pi_temp_c()} C")
 
     temp1 = _pi_temp_c()
-    camera.stop()
-    if sign_det is not camera:
-        sign_det.stop()
+    if camera is not None:
+        camera.stop()
+        if sign_det is not camera:
+            sign_det.stop()
 
     import csv
     with open(out, "w", newline="", encoding="utf-8") as f:
@@ -176,7 +198,7 @@ def main() -> int:
 
     lat = np.array([r[5] for r in rows][1:], dtype=np.float64)  # drop warm-up cycle
     print("=" * 58)
-    print(f"  ON-DEVICE LATENCY  ({backend})")
+    print(f"  LATENCY  ({backend})")
     print("=" * 58)
     print(f"  cycles       : {lat.size}")
     print(f"  mean/median  : {lat.mean():.2f} / {np.median(lat):.2f} ms")
@@ -184,12 +206,13 @@ def main() -> int:
     print(f"  p95 / p99    : {np.percentile(lat,95):.2f} / {np.percentile(lat,99):.2f} ms")
     print(f"  max          : {lat.max():.2f} ms")
     print(f"  under {deadline_ms:.0f} ms   : {100*np.mean(lat<=deadline_ms):.2f} %")
-    print(f"  CPU temp     : {temp0} -> {temp1} C")
+    if not args.synthetic:
+        print(f"  CPU temp     : {temp0} -> {temp1} C")
     print("=" * 58)
     print(f"[BENCH] CSV: {out}")
     print(f"[BENCH] Full distribution + figure:")
     print(f'        python tools/latency_stats.py "{out}" --deadline {deadline_ms:.0f} '
-          f'--label "Pi 5 + IMX500 (on-device)"')
+          f'--label "{backend}"')
     return 0
 
 
