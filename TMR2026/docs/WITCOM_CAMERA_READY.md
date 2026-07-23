@@ -92,11 +92,14 @@ Fill the "physical" columns after tomorrow's runs.
 
 **Order matters — calibrate first, then measure.**
 
-**Step 0 — Calibrate vision for YOUR home track & light** (no motors):
+**Step 0 — Calibrate vision for YOUR home track & light** (no motors — THIS is
+what makes it drive like Unity):
 ```bash
-python tools/test_camera.py --no-yolo     # tune HSV white until lines are clean
+python tools/tune_track.py                 # live sliders: HSV + roi + right_bias + PID
 ```
-If black surface leaks into the white mask, raise `V_min` in `lane_pipeline.py`.
+Drag until the green lane line is stable and centered, press **s** to save
+`track_calib.json`. From then on `main.py` loads it automatically. Quick check
+without tuning: `python tools/test_camera.py --no-yolo`.
 
 **Step 1 — Real latency (no movement, biggest win):**
 ```bash

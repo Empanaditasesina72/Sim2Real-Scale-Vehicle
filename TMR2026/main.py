@@ -93,6 +93,28 @@ PID_KD            = 0.025
 PID_OUT_MIN       = -(SERVO_CENTER - SERVO_MIN)
 PID_OUT_MAX       =  (SERVO_MAX - SERVO_CENTER)
 
+import json
+
+
+def _load_track_calib() -> dict:
+    """Load on-track calibration (HSV white / right_bias / roi_frac / PID gains)
+    saved by tools/tune_track.py, if it exists. An empty dict means the built-in
+    defaults are used, so the file is optional and fully backward-compatible."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "track_calib.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            calib = json.load(f)
+        print(f"[CALIB] Track calibration loaded: {path}")
+        return calib
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        print(f"[CALIB] Could not read track_calib.json ({e}); using defaults.")
+        return {}
+
+
+_TRACK_CALIB = _load_track_calib()
+
 from hardware.motor            import MotorDriver
 from hardware.steering_driver  import SteeringDriver
 from hardware.distance_sensor  import DistanceSensor
@@ -184,13 +206,19 @@ class VehicleTMR:
         self.brake_light = BrakeLight(pin=PIN_LED_BRAKE)
 
         self.camera, self.sign_det = self._build_vision()
+        _c = _TRACK_CALIB
         self.lane_pipe = LanePipeline(
-            frame_w=CAMERA_W, frame_h=CAMERA_H, debug=_DISPLAY
+            frame_w=CAMERA_W, frame_h=CAMERA_H, debug=_DISPLAY,
+            right_bias=_c.get("right_bias", 0.70),
+            roi_frac=_c.get("roi_frac", 0.5),
+            hsv_white_lo=_c.get("hsv_white_lo"),
+            hsv_white_hi=_c.get("hsv_white_hi"),
         )
         self.lane_pipe = self._maybe_drive_net(self.lane_pipe)
 
+        _p = _TRACK_CALIB.get("pid", {})
         self.pid = PIDController(
-            kp=PID_KP, ki=PID_KI, kd=PID_KD,
+            kp=_p.get("kp", PID_KP), ki=_p.get("ki", PID_KI), kd=_p.get("kd", PID_KD),
             setpoint=0.0,
             output_limits=(PID_OUT_MIN, PID_OUT_MAX),
             integral_limits=(-25.0, 25.0),
