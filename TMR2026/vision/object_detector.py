@@ -20,7 +20,7 @@ from config import (
     STOP_SIGN_REAL_HEIGHT_M, CAMERA_FOCAL_LENGTH_PX,
     DETECTION_CONFIDENCE, DETECTION_MIN_FRAMES,
     OVERTAKE_LANE_RATIO, OVERTAKE_MIN_BBOX_AREA, OVERTAKE_TRIGGER_Y_MIN,
-    PARK_GAP_CAMERA_ZONE,
+    PARK_GAP_CAMERA_ZONE, PARK_SIDE,
 )
 
 
@@ -151,7 +151,10 @@ class ObjectDetector:
                 and area >= OVERTAKE_MIN_BBOX_AREA
                 and y2 >= OVERTAKE_TRIGGER_Y_MIN
             )
-            result.car_in_park_zone = cx > CAMERA_WIDTH * PARK_GAP_CAMERA_ZONE
+            if PARK_SIDE == "right":
+                result.car_in_park_zone = cx > CAMERA_WIDTH * PARK_GAP_CAMERA_ZONE
+            else:
+                result.car_in_park_zone = cx < CAMERA_WIDTH * (1.0 - PARK_GAP_CAMERA_ZONE)
 
         return result
 
