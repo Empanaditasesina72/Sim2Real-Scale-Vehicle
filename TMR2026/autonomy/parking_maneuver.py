@@ -30,7 +30,7 @@ from enum import Enum, auto
 from config import (
     WHEELBASE, TRACK_WIDTH, MAX_STEERING_ANGLE_DEG,
     SERVO_CENTER_ANGLE, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE,
-    PARK_SEARCH_SPEED, PARK_MANEUVER_SPEED,
+    PARK_SIDE, PARK_SEARCH_SPEED, PARK_MANEUVER_SPEED,
     PARK_MIN_GAP_MM, PARK_TARGET_GAP_MM,
     PARK_OVERSHOOT_SEC, PARK_REVERSE_LOCK_SEC,
     PARK_REVERSE_STRAIGHT_SEC,
@@ -62,7 +62,7 @@ class ParkingManeuver:
     if the car has them.
     """
 
-    def __init__(self, gap_side: str = "right"):
+    def __init__(self, gap_side: str = PARK_SIDE):
         self.gap_side = gap_side
         self._state     = ParkingState.IDLE
         self._phase_start: float    = 0.0
@@ -216,8 +216,8 @@ class ParkingManeuver:
 
         Logic:
         - If obj_result exists -> use the camera as the primary source.
-          The gap exists when there is NO AUTO in the right-side zone for at
-          least PARK_GAP_CAMERA_MIN_SEC seconds.
+          The gap exists when there is NO AUTO in the config.py:PARK_SIDE zone
+          for at least PARK_GAP_CAMERA_MIN_SEC seconds.
         - If there is no obj_result -> fall back to ToF (original behavior).
         """
         if obj_result is not None:
@@ -228,9 +228,9 @@ class ParkingManeuver:
 
     def _detect_gap_camera(self, obj_result, now: float) -> bool:
         """
-        Detect the gap when the right-side space is clear.
+        Detect the gap when the parking-side space is clear.
 
-        While the first delimiting car was on the right side and now there is
+        While the first delimiting car was on the parking side and now there is
         no longer an AUTO in that zone = start of the gap.
         Requires PARK_GAP_CAMERA_MIN_SEC consecutive seconds without a side
         AUTO to confirm (avoids false positives from noisy frames).
