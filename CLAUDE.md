@@ -353,6 +353,16 @@ An optional CNN replacement for the classic lane follower. `vision/drive_net.py:
 
 ## Hard rules (don't break these)
 
+- **NEVER touch or push to the `Robotics-TESE` remotes.** `org` in this repo
+  (`Robotics-TESE/Sim2Real-Scale-Vehicle`, frozen at `97c6254`) and `org` in the
+  Unity repo (`Robotics-TESE/TMR2026_Sim`, frozen at `7601c66`) hold **exactly
+  what was submitted with the paper**, and the expo talk will be built from that
+  state. Both are deliberately behind `main`; that gap is the point, not a bug to
+  fix. No push, no force, no tag, no release, no branch, no file edit through
+  them — not even to "sync" or "catch them up". Work only against `origin`
+  (`Empanaditasesina72/*`) and `pi`. Stated by Angel Emmanuel Carrera Alva on
+  2026-09-07.
+
 - **Never modify `motor.brake()`** — it must remain an instantaneous hard-cut to 0.
 - **Do NOT add a `cv2.COLOR_RGB2BGR` conversion after `capture_array()`** (this rule
   was the opposite until 2026-07-25, when it was measured to be wrong). Picamera2's
