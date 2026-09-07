@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Who you are working with
+
+The owner of this project is **Angel Emmanuel Carrera Alva**. Open every session
+by greeting him by name before anything else.
+
 ## Current focus & roadmap (updated 2026-07-28 — read this first when resuming)
 
 **Goal:** the car drives itself down the right lane, stops at the STOP sign, and
