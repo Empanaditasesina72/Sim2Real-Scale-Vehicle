@@ -99,57 +99,97 @@ python TMR2026/tools/record_driving.py --source sim --label human --max 6000
 python TMR2026/tools/train_drive.py \
     --data datasets/sim_trackA,datasets/sim_trackB,datasets/drive_synth \
     --val datasets/sim_trackC --epochs 60 --batch 64 --device cuda
+# lighter net, recorded data: smooth the teacher's jitter, oversample curves
+python TMR2026/tools/train_drive.py --data datasets/track_real --arch mobilenet \
+    --smooth 5 --balance --shift-gain <BEV px per image px> --epochs 60
 ```
 Mixing the synthetic tub in as extra data regularizes against overfitting one
-track. Output: `weights/drive_net.pt` + `drive_net.json` (preprocessing meta) +
-`drive_train.png` (loss / val-RMSE curve). Watch **val RMSE in px** go down.
+track. Output: `weights/drive_net.pt` (best val RMSE, saved on every
+improvement) + `drive_net.json` (preprocessing meta) + `drive_net_last.pt` +
+`drive_history.json` + `drive_train.png`. Watch **val RMSE in px** go down;
+training stops by itself after `--patience` epochs without a `--min-delta` px
+improvement.
+
+**No GPU at hand?** Open `TMR2026/notebooks/train_colab.ipynb` in Google Colab
+(or Kaggle): it clones the repo, mounts the dataset (Drive / Kaggle input / zip
+/ synthetic), previews the augmentation, trains with early stopping, plots
+loss/MSE/RMSE/MAE, evaluates and exports — then saves everything to Drive.
+
+| Flag | Effect |
+|---|---|
+| `--arch pilotnet\|mobilenet` | PilotNet (~0.25 M params) or MobileNetV2-style (~0.17 M) |
+| `--smooth N` | centred moving average over N frames of **recorded** labels (synthetic rows are never smoothed) |
+| `--balance` | inverse-frequency sampling over \|error\| bins — stops the net learning "always straight" |
+| `--throttle` | third head on the tubs' `throttle` column (normalized by `--throttle-max`) |
+| `--shift-gain` | label px per image px for the lateral-shift augmentation; 1.0 for synthetic tubs, the BEV/image scale for `LanePipeline`-labelled tubs |
+| `--roi-frac`, `--roi-bottom` | rows of the frame the net sees |
+| `--loss huber\|mse` | Huber (default) shrugs off teacher-label outliers |
+| `--patience`, `--min-delta` | early stopping |
 
 ### 3. Evaluate
 
 ```bash
 python TMR2026/tools/test_drive_net.py --tub datasets/sim_trackC   # RMSE vs expert
 python TMR2026/tools/test_drive_net.py --camera                    # live (Pi)
+python TMR2026/tools/test_drive_net.py --weights weights/drive_net_int8.onnx --camera
 ```
 
 ### 4. Export for the Pi
 
 ```bash
-python TMR2026/tools/export_drive.py            # weights/drive_net.torchscript
-python TMR2026/tools/export_drive.py --onnx     # + ONNX (needs onnx + onnxscript)
-# NCNN (fastest on the Pi 5 ARM CPU):
-pip install pnnx && pnnx weights/drive_net.torchscript inputshape=[1,3,66,200]
+python TMR2026/tools/export_drive.py                                   # TorchScript + ONNX
+python TMR2026/tools/export_drive.py --fp16 --int8 --calib datasets/track_real --bench
+python TMR2026/tools/export_drive.py --tflite --int8 --calib datasets/track_real
 ```
+
+| File | Runtime on the Pi | Notes |
+|---|---|---|
+| `drive_net.onnx` | onnxruntime | FP32 reference |
+| `drive_net_fp16.onnx` | onnxruntime | half the size, float32 I/O |
+| `drive_net_int8.onnx` | onnxruntime | static INT8, per-channel, calibrated on `--calib` frames |
+| `drive_net_fp16.tflite` / `drive_net_int8.tflite` | ai-edge-litert | via onnx2tf; INT8 has int8 I/O, handled by `DriveNet` |
+
+**Always calibrate INT8 on real track frames** — without `--calib` the ranges
+come from noise. The table the exporter prints gives each file's steering RMSE
+against the PyTorch model (synthetic test: 0.16–0.23 px for INT8). Run `--bench`
+on the Pi itself for FPS; numbers from a PC say nothing about the car.
 
 ### 5. Enable it on the car
 
-In `config.py`:
+Copy the chosen export **and `drive_net.json`** into `TMR2026/weights/`, then in
+`config.py`:
 ```python
 USE_DRIVE_NET      = True
-DRIVE_NET_WEIGHTS  = "weights/drive_net.pt"
+DRIVE_NET_WEIGHTS  = "weights/drive_net_int8.onnx"   # or drive_net.pt / .tflite
 DRIVE_NET_CONF_MIN = 0.30
 ```
 `main.py` and `main_simulator.py` then swap `LanePipeline` for `DriveNet`
-automatically (guarded: if the weights or torch are missing, they fall back to
-the classic pipeline and print a notice). Everything downstream is unchanged —
-AUTONOMOUS mode feeds `result.error_px` to the same FSM/PID, and `--display`
-shows the `[NET]` overlay. Default is `False`, so the car's behavior does not
-change until you flip the flag.
+automatically (guarded: if the weights or the runtime are missing, they fall
+back to the classic pipeline and print a notice). Everything downstream is
+unchanged — AUTONOMOUS mode feeds `result.error_px` to the same FSM/PID, and
+`--display` shows the `[NET]` overlay. Default is `False`, so the car's
+behavior does not change until you flip the flag.
 
 ---
 
 ## Architecture
 
-- **Input**: lower part of the BGR frame (ROI), resized to 200×66, converted to
-  YUV, normalized. Preprocessing lives once in `drive_net.preprocess()` and is
-  shared by training, evaluation and inference so they can never drift.
-- **Model**: 5 conv + adaptive pool (keeps horizontal resolution = lateral lane
-  position) + 4 FC → 2 outputs `[error_norm, confidence_logit]`. ~250k params,
-  ~1 MB, runs in a few ms on the Pi 5 CPU.
-- **Target**: `error_px / norm_px` (default `norm_px=150`), plus a confidence the
-  FSM can treat like a weak classic detection.
-- **Augmentation** (in `train_drive.py`): horizontal flip (error negated),
-  horizontal shift (error compensated), brightness/contrast/gamma, HSV jitter,
-  random shadows, blur, noise. This is what buys track generalization.
+- **Input**: rows `[roi_frac, roi_bottom)` of the BGR frame (ROI: the road, not
+  the walls), resized to 200×66, converted to YUV, /255. Preprocessing lives once
+  in `drive_net.preprocess()` and is shared by training, evaluation, export
+  calibration and inference so they can never drift.
+- **PilotNet**: 5 conv (BN + ELU) + adaptive pool to 1×18 (keeps horizontal
+  resolution = lateral lane position) + 4 FC. ~250 k params, ~1 MB.
+- **MobileNet**: MobileNetV2 inverted residuals (1×1 expand → 3×3 depthwise →
+  1×1 linear), ReLU6 + BN, height-only average pool that keeps 13 horizontal
+  cells, 2 FC. ~170 k params, ~0.7 MB FP32 / ~0.25 MB INT8.
+- **Outputs**: `[error_norm, confidence_logit(, throttle_logit)]`.
+- **Target**: `clip(error_px / norm_px, ±1.5)` (default `norm_px=150`), plus a
+  confidence the FSM can treat like a weak classic detection.
+- **Augmentation** (`vision/drive_data.py`): flip (error negated), perspective
+  lateral shift (error compensated), brightness/contrast/gamma, HSV jitter,
+  soft shadows, specular glare, Gaussian/motion blur, noise, JPEG artefacts.
+  This is what buys generalization across lighting and tracks.
 
 ---
 

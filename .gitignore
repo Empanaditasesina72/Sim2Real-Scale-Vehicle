@@ -36,8 +36,15 @@ TMR2026/weights/tmr_signs_imx_model/
 # Tubs (synthetic/recorded) and demo weights are produced by the DriveNet
 # tools; only the code is versioned. See TMR2026/docs/DRIVE_NET.md.
 TMR2026/datasets/
-TMR2026/weights/drive_net.pt
-TMR2026/weights/drive_net.json
+TMR2026/weights/drive_net*.pt
+TMR2026/weights/drive_net*.json
+TMR2026/weights/drive_net*.onnx
+TMR2026/weights/drive_net*.tflite
+TMR2026/weights/drive_net.torchscript
+TMR2026/weights/drive_net_tflite/
+TMR2026/weights/drive_history.json
+TMR2026/weights/drive_train.png
+TMR2026/weights/drive_eval.png
 TMR2026/weights/drive_net.torchscript
 TMR2026/weights/drive_net.onnx
 TMR2026/weights/drive_net.ncnn.*

@@ -1,0 +1,26 @@
+# ============================================================
+# DriveNet training + export (PC GPU, Google Colab, Kaggle)
+# NOT needed on the Raspberry Pi -- see requirements.txt there.
+#   pip install -r TMR2026/requirements-train.txt
+# For CUDA on a PC install torch from https://pytorch.org first.
+# ============================================================
+torch>=2.1
+numpy>=1.24
+opencv-python-headless>=4.8
+matplotlib>=3.7
+
+# Export: ONNX FP32 / FP16 / INT8 (tools/export_drive.py)
+onnx>=1.15
+onnxscript
+onnxruntime>=1.17
+onnxconverter-common
+
+# Optional: TFLite FP16 / INT8 (tools/export_drive.py --tflite). Heavy (~1 GB),
+# preinstalled tensorflow on Colab; uncomment elsewhere.
+# tensorflow
+# tf_keras
+# onnx2tf
+# onnx_graphsurgeon
+# sng4onnx
+
+pytest>=7.0

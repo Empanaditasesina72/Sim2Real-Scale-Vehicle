@@ -351,10 +351,12 @@ Sim2Real-Scale-Vehicle/
     │   └── brake_light.py     ← brake light
     │
     ├── vision/
-    │   ├── camera_stream.py   ← Picamera2 · RGB→BGR
+    │   ├── camera_stream.py   ← Picamera2 ("RGB888" is already BGR) · adaptive exposure
     │   ├── lane_pipeline.py   ← lane: BEV + sliding windows + EMA  (ACTIVE)
     │   ├── sign_detector.py   ← YOLOv8n NCNN + color fallback      (ACTIVE)
-    │   └── imx500_detector.py ← on-camera NPU detection (if .rpk present)
+    │   ├── imx500_detector.py ← on-camera NPU detection (if .rpk present)
+    │   ├── drive_net.py       ← learned steering CNN (PilotNet / MobileNet), opt-in
+    │   └── drive_data.py      ← DriveNet training data: labels + augmentation
     │
     ├── control/
     │   ├── fsm.py             ← driving FSM (5 states)
@@ -362,7 +364,9 @@ Sim2Real-Scale-Vehicle/
     │   └── pid_controller.py  ← anti-windup PID
     │
     ├── docs/                  ← SETUP, Sim2Real protocol, calibration, deliveries
-    ├── tests/                 ← pytest: FSM, signals, YOLO hysteresis
+    ├── tests/                 ← pytest: FSM, signals, YOLO hysteresis, drivers, DriveNet
+    ├── notebooks/
+    │   └── train_colab.ipynb  ← DriveNet training on a free GPU (Colab / Kaggle)
     │
     ├── sim_hardware_mocks.py  ← socket mocks (camera/motor/servo/ToF)
     ├── validation_logger.py   ← CSV + Sim2Real scoreboard
@@ -372,6 +376,8 @@ Sim2Real-Scale-Vehicle/
     ├── tools/test_camera.py   ← camera+lane+YOLO preview (no motors)
     ├── tools/export_model.py  ← exports the .pt to NCNN (after retraining)
     ├── tools/export_imx500.py ← exports the .pt to the camera NPU (.rpk, on the Pi)
+    ├── tools/train_drive.py   ← trains DriveNet (early stopping, AMP, curves)
+    ├── tools/export_drive.py  ← DriveNet → ONNX FP32/FP16/INT8, TFLite FP16/INT8
     ├── weights/
     │   ├── tmr_signs.pt           ← YOLO model (PyTorch, fallback)
     │   └── tmr_signs_ncnn_model/  ← NCNN export — used by the Pi (3-4× faster)
