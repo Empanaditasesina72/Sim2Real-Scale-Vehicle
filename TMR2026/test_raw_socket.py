@@ -47,7 +47,7 @@ while time.time() - start < 10:
 elapsed = time.time() - start
 print()
 print("=" * 60)
-print(f"[RAW] RESULTADO:")
+print("[RAW] RESULTADO:")
 print(f"  Tiempo:        {elapsed:.1f}s")
 print(f"  recv() calls:  {total_recv_calls}")
 print(f"  Bytes totales: {total_bytes}")

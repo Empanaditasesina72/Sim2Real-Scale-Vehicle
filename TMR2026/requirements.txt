@@ -41,6 +41,11 @@ ultralytics>=8.0
 # (3-4× más rápido que PyTorch en la CPU ARM de la Pi 5).
 ncnn
 
+# DriveNet (opcional, USE_DRIVE_NET=True): runtime para el modelo exportado.
+#   .onnx   -> pip install --break-system-packages onnxruntime
+#   .tflite -> pip install --break-system-packages ai-edge-litert
+# Entrenamiento y exportación: requirements-train.txt (PC / Colab).
+
 # --- Solo PC / Sim2Real (validación, NO necesario en el Pi) ---
 # matplotlib: gráficas del artículo (analyze_results.py)
 matplotlib>=3.7

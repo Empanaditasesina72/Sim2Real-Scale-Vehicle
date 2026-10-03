@@ -55,7 +55,7 @@ IMX500_LABELS_PATH = "weights/tmr_signs_imx500_labels.txt"
 IMX500_CONF        = 0.55
 
 USE_DRIVE_NET      = False
-DRIVE_NET_WEIGHTS  = "weights/drive_net.pt"
+DRIVE_NET_WEIGHTS  = "weights/drive_net.pt"   # or drive_net_int8.onnx / .tflite (tools/export_drive.py)
 DRIVE_NET_CONF_MIN = 0.30
 
 CAMERA_WIDTH  = 640

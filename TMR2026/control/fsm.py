@@ -281,7 +281,7 @@ class AutonomousFSM:
                     if time.monotonic() < self._coast_until:
                         self.motor.set_speed(self.PRECAUCION_PWM)
                         return
-                    print(f"[FSM] Coast done -> braking")
+                    print("[FSM] Coast done -> braking")
                 self._transition(FSMState.FRENADO)
             else:
                 self._last_sign_mm = None

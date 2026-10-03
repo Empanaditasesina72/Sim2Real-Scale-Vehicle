@@ -151,7 +151,7 @@ class ParkingManeuver:
                 if gap_open:
                     self._gap_detected_at = now
                     self._transition(ParkingState.POSITIONING)
-                    print(f"[PARKING] Gap detected. Positioning...")
+                    print("[PARKING] Gap detected. Positioning...")
 
             case ParkingState.POSITIONING:
                 motor.set_throttle(PARK_SEARCH_SPEED)

@@ -74,6 +74,13 @@ class CameraStream:
     # can adopt a change, then falls back to CAMERA_ADAPT_INTERVAL_S once settled.
     ADAPT_FAST_INTERVAL_S = 0.35
 
+    # A frame older than this is not served. If the capture thread dies or the
+    # sensor stops delivering, get_frame() returns None instead of handing the
+    # same frozen image to the lane follower forever: a static frame yields a
+    # perfectly steady lane error, so the car would keep driving blind with
+    # every metric looking healthy.
+    STALE_FRAME_S = 0.5
+
     def __init__(
         self,
         width:        int   = 640,
@@ -87,6 +94,8 @@ class CameraStream:
         self._warmup_s   = awb_warmup_s
 
         self._frame: Optional[np.ndarray] = None
+        self._frame_t = 0.0
+        self._thread: Optional[threading.Thread] = None
         self._lock  = threading.Lock()
         self._stop  = threading.Event()
         self._ready = threading.Event()
@@ -135,27 +144,44 @@ class CameraStream:
         # diagnostic run draw the wrong conclusion.
         time.sleep(self.CONTROL_SETTLE_S)
         self._stop.clear()
-        threading.Thread(
+        self._thread = threading.Thread(
             target=self._capture_loop,
             name="CameraStream",
             daemon=True,
-        ).start()
+        )
+        self._thread.start()
         self._ready.wait(timeout=5.0)
         print("[CAM] Ready.")
 
     def stop(self) -> None:
         self._stop.set()
-        time.sleep(0.1)
+        # Join instead of a fixed sleep: stopping Picamera2 while the thread is
+        # inside capture_array() can block or raise in that thread.
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
         self._picam2.stop()
 
 
     def get_frame(self) -> Optional[np.ndarray]:
         """
         Return the most recent BGR frame. Never blocks.
-        Returns None if the camera has not captured any frame yet.
+        Returns None if the camera has not captured any frame yet, or if the
+        newest frame is older than STALE_FRAME_S (capture stalled).
         """
         with self._lock:
-            return self._frame.copy() if self._frame is not None else None
+            if self._frame is None:
+                return None
+            if time.monotonic() - self._frame_t > self.STALE_FRAME_S:
+                return None
+            return self._frame.copy()
+
+    @property
+    def frame_age_s(self) -> float:
+        """Seconds since the last captured frame (inf before the first one)."""
+        with self._lock:
+            return (time.monotonic() - self._frame_t) if self._frame is not None \
+                else float("inf")
 
     def recalibrate(self) -> None:
         """Re-calibrate AE/AWB (use on lighting changes)."""
@@ -205,7 +231,8 @@ class CameraStream:
             self._picam2.set_controls(ctrl)
             self._exp  = float(exp)  if exp  is not None else 10_000.0
             self._gain = float(gain) if gain is not None else 2.0
-            print(f"[CAM] AE/AWB locked ({src}) - exp={exp} us  gain={gain:.2f}")
+            gain_s = f"{gain:.2f}" if gain is not None else "?"
+            print(f"[CAM] AE/AWB locked ({src}) - exp={exp} us  gain={gain_s}")
         except Exception as e:
             print(f"[CAM] Could not lock AE/AWB: {e}")
 
@@ -297,10 +324,21 @@ class CameraStream:
             # reads H=9.4 (red), and after a COLOR_RGB2BGR it reads H=110.8
             # (cyan). Converting swaps red and blue. See vision/imx500_detector.py
             # for the full note.
-            bgr = self._picam2.capture_array()
+            try:
+                bgr = self._picam2.capture_array()
+            except Exception as e:
+                # Keep the thread alive: an exception here used to kill it
+                # silently, leaving get_frame() serving the last frame forever.
+                # Now the frame simply ages out (see STALE_FRAME_S) and the
+                # loop retries.
+                if not self._stop.is_set():
+                    print(f"[CAM] capture failed: {e}", flush=True)
+                    time.sleep(0.05)
+                continue
 
             with self._lock:
                 self._frame = bgr
+                self._frame_t = time.monotonic()
 
             self._ready.set()
 

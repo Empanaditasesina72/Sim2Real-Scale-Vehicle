@@ -20,8 +20,6 @@ import time
 from enum import Enum, auto
 from typing import Optional
 
-import lgpio as _lgpio_mod
-
 from config import (
     SPEED_STRAIGHT, SPEED_CURVE, SPEED_APPROACH,
     STOP_BRAKE_START_MM, STOP_TARGET_MM, STOP_TOLERANCE_MM,

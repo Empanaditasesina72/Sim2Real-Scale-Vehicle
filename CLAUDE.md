@@ -205,6 +205,129 @@ more than any retraining.
   `git push pi`.** The car ran old code for a while because of this. Commit the
   trim after applying it.
 
+## Repository map
+
+```
+CLAUDE.md                  this file (project memory + rules)
+README.md                  public overview, diagrams, pinout
+main.py                    loader: chdir TMR2026/ + runpy TMR2026/main.py
+docs/                      project-wide architecture diagram + generator
+traffic_lights/            Roboflow v9 sign dataset (train/valid/test, data.yaml)
+_legacy/                   old prototypes + YOLO training runs -- never import
+TMR2026/                   THE vehicle
+  main.py                  production entry point (50 Hz loop, modes, display)
+  main_simulator.py        same stack against the Unity digital twin (UDP 5005)
+  config.py                single source of truth: pins, gains, speeds, camera
+  vision_config.yaml       pins/thresholds for vision_module.py only
+  requirements.txt         Pi runtime deps (APT list in the header)
+  requirements-train.txt   PC / Colab / Kaggle training + export deps
+  hardware/                motor (IBT-2 soft-start), steering (PCA9685), ToF,
+                           turn signals, brake light, NPU camera prototype
+  vision/                  camera_stream, lane_pipeline (classic BEV follower),
+                           sign_detector (YOLO/NCNN), imx500_detector (NPU),
+                           drive_net (learned steering), drive_data (training data)
+  control/                 fsm (driving FSM), parking_fsm, pid_controller,
+                           gamepad_reader
+  autonomy/                alternative 9-state FSM + parking maneuver (unwired)
+  tools/                   calibration, diagnostics, benchmarks, training, export
+  notebooks/               train_colab.ipynb (DriveNet on a free GPU)
+  tests/                   pytest suite (no hardware needed)
+  weights/                 tmr_signs.pt + NCNN export (drive_net.* is gitignored)
+  docs/                    SETUP, DRIVE_NET, IMX500_NPU, paper/rebuttal material
+  paper_results/           figures + latency CSVs quoted in the paper
+  systemd/                 carrito_tmr.service (boot-time autostart)
+  sim_hardware_mocks.py, validation_logger.py, run_validation.py,
+  analyze_results.py       Sim2Real validation harness
+  test_*.py, vision_module.py   personal diagnostics -- see "Personal test scripts"
+```
+
+## System requirements & dependencies
+
+**Target board: Raspberry Pi 5 only** (Bookworm, 64-bit, Python 3.11). There is
+no ESP32 / Jetson / microcontroller port: GPIO goes through `lgpio` on
+`gpiochip4`, which is Pi-5-specific, and the camera is the Sony IMX500 through
+Picamera2.
+
+| Layer | Packages | Where |
+|---|---|---|
+| Camera | `python3-picamera2`, `python3-libcamera`, `imx500-all` | APT |
+| GPIO / PWM | `lgpio` (primary), `python3-rpi.gpio` (fallback, software PWM -- loses duty under CPU load) | pip / APT |
+| I²C devices | `adafruit-circuitpython-pca9685`, `-motor`, `-vl53l0x`, `adafruit-extended-bus`, `adafruit-blinka` | pip |
+| Vision | `opencv-python-headless>=4.8`, `numpy>=1.24` | pip |
+| Signs | `ultralytics>=8.0`, `ncnn` (3-4x faster on the Pi CPU) | pip |
+| Gamepad | `python3-pygame`, `bluez`, `python3-dbus` | APT |
+| DriveNet on the car (optional) | `onnxruntime` for `.onnx`, or `ai-edge-litert` for `.tflite`; `torch` only for `.pt` | pip |
+| Training (PC/Colab) | `requirements-train.txt`: torch, onnx, onnxruntime, onnxscript, onnxconverter-common, matplotlib; TFLite: tensorflow, onnx2tf | pip |
+| Tests | `pytest>=7` | pip |
+
+On the Pi, pip needs `--break-system-packages` (PEP 668). Kernel overlays
+required (in `/boot/firmware/config.txt`):
+
+```
+dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=0,i2c_gpio_scl=1,i2c_gpio_delay_us=2    # PCA9685 servo
+dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=23,i2c_gpio_scl=22,i2c_gpio_delay_us=2  # VL53L0X ToF
+```
+
+## Deployment on the car, step by step
+
+1. **Flash** Raspberry Pi OS Bookworm 64-bit; user `angel01`; enable SSH. Join
+   Tailscale (the car is `100.68.26.120`).
+2. **APT**: `sudo apt update && sudo apt install -y python3-picamera2 python3-libcamera imx500-all python3-pygame python3-rpi.gpio python3-smbus2 bluetooth bluez python3-dbus`
+3. **I²C buses**: append the two `dtoverlay` lines above, reboot, then
+   `i2cdetect -y 3` → `0x40` and `i2cdetect -y 4` → `0x29`/`0x30`.
+4. **Code**: the Pi's checkout lives at `/home/angel01/Carrito` (that is what
+   the systemd unit points at). `git clone` there, or push from the PC to the
+   `pi` remote; make sure `origin` exists so `git pull origin main` works.
+5. **pip**: `pip install --break-system-packages -r TMR2026/requirements.txt`
+   (includes `lgpio`, `ncnn`, `ultralytics`). Add `onnxruntime` if DriveNet
+   will run from an `.onnx`.
+6. **Gamepad**: `bluetoothctl` → `pair`/`trust`/`connect` the PS4 pad; keep
+   `AutoEnable=true` in `/etc/bluetooth/main.conf`.
+7. **Smoke tests, no motors**: `pytest TMR2026/tests -q`, then
+   `python TMR2026/tools/test_camera.py --no-yolo` and look at the mask and the
+   BEV (`tools/diag_track.py` writes `/tmp/diag/2_bev.png` -- see the camera-aim
+   trap above before trusting any confidence number).
+8. **Calibrate** on the track: `SERVO_TRIM_DEG` (`tools/auto_trim.py`, then
+   *commit the trim* or `git push pi` is rejected), `LANE_ERROR_OFFSET_PX`
+   (`tools/diag_track.py --frames 12`), exposure (`tools/tune_exposure.py`).
+9. **Run**: `python main.py --display` → gamepad B (VISION) to check the
+   overlay with the wheels still, X (AUTONOMOUS) to drive, Start = emergency.
+10. **Autostart**: `sudo cp TMR2026/systemd/carrito_tmr.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now carrito_tmr`; logs with `journalctl -u carrito_tmr -f`. Running `main.py` by hand stops the service automatically.
+11. **Optional learned steering**: train on a GPU (`TMR2026/notebooks/train_colab.ipynb`
+    or `tools/train_drive.py`), copy `drive_net_int8.onnx` **and**
+    `drive_net.json` into `TMR2026/weights/`, set `USE_DRIVE_NET = True` and
+    `DRIVE_NET_WEIGHTS = "weights/drive_net_int8.onnx"`, and check it first with
+    `tools/test_drive_net.py --weights ... --camera` (no motors).
+
+## Code audit, 2026-10-03
+
+Full pass over the production path. Static analysis (pyflakes) found no
+undefined names; the real defects were concurrency and fail-safe bugs, each
+now covered by `tests/test_hardware_fixes.py` or `tests/test_drive_net.py`:
+
+- **`MotorDriver._ramp_loop` could undo `brake()`.** It read the duty under the
+  lock, released it, then wrote `current + step` back and drove the H-bridge.
+  A `brake()` landing in that gap was overwritten: the motor came back on at
+  the stale ramp value (e.g. 27 % when ramping down from 35 %). The step is now
+  computed, stored and applied under one lock hold. `brake()` itself is
+  untouched. The regression test reproduces the race deterministically (it
+  fails on the old loop).
+- **`CameraStream` served a frozen frame forever** if `capture_array()` ever
+  raised: the thread died silently and `get_frame()` kept returning the last
+  image -- which, as the instrumentation lessons above say, looks perfect to
+  every metric. The loop now survives capture errors, frames older than
+  `STALE_FRAME_S` (0.5 s) are not served, and `main.py:_update_vision` sets
+  `lane_conf = 0` when there is no fresh frame, so CRUCERO brakes. `stop()`
+  joins the thread instead of sleeping 0.1 s.
+- **ToF address collision**: a front VL53L0X that answered but failed
+  `set_address()` stayed powered at 0x29, the rear one's address. It is now
+  powered back down; each sensor is also read independently, so one I²C error
+  no longer blanks both; `stop()` is idempotent.
+- **`SteeringDriver._ackermann_angles`** swapped inner/outer wheel on left
+  turns (informational output only).
+- DriveNet's fallback `LaneResult` lacked `heading`, which `main.py` reads every
+  tick; training-side bugs are listed in the DriveNet section below.
+
 ## Active system: TMR2026/
 
 Everything under `TMR2026/` is the current vehicle. Legacy prototypes live in `_legacy/` and must not be imported from TMR2026. Project-wide docs (architecture diagram + generator) live in `docs/`; TMR2026-specific docs (SETUP, Sim2Real protocol, calibration, professor deliveries) live in `TMR2026/docs/`.
@@ -345,10 +468,20 @@ These are full implementations kept for future wiring. Treat as library code:
 
 ## Learned steering (DriveNet, opt-in behavioral cloning)
 
-An optional CNN replacement for the classic lane follower. `vision/drive_net.py:DriveNet` predicts `error_px` with the **same `.process()`/`.draw_debug()` contract as `LanePipeline`**, so it is a true drop-in — the FSM, PID, sign gating and lights are untouched. Enabled by `config.py:USE_DRIVE_NET` (default **False**); `main.py:_maybe_drive_net()` and `main_simulator.py` swap it in only if the flag is set AND `weights/drive_net.pt` exists, else they keep the classic pipeline (Sim2Real parity preserved).
+An optional CNN replacement for the classic lane follower. `vision/drive_net.py:DriveNet` predicts `error_px` with the **same `.process()`/`.draw_debug()` contract as `LanePipeline`**, so it is a true drop-in — the FSM, PID, sign gating and lights are untouched. Enabled by `config.py:USE_DRIVE_NET` (default **False**); `main.py:_maybe_drive_net()` and `main_simulator.py` swap it in only if the flag is set AND `DRIVE_NET_WEIGHTS` exists, else they keep the classic pipeline (Sim2Real parity preserved).
 
 - It is behavioral cloning: it **cannot train without `(image → error_px)` data**. Sources: the Unity sim and/or the classic pipeline as an auto-labeling teacher.
-- Pipeline tools (all share one tub format `frames/ + labels.csv`): `tools/gen_synth_driving.py` (synthetic, no hardware), `tools/record_driving.py` (sim/camera/video/images), `tools/train_drive.py` (augmentation → `weights/drive_net.pt` + `.json` meta), `tools/test_drive_net.py` (eval, no GPIO), `tools/export_drive.py` (TorchScript/ONNX/NCNN).
+- **Architectures** (`--arch`, stored in the checkpoint meta): `pilotnet` (NVIDIA PilotNet, ~0.25 M params, default) and `mobilenet` (MobileNetV2-style inverted residuals, ~0.17 M params, ReLU6+BN so it quantizes cleanly). Optional third head predicts throttle when tubs carry a `throttle` column (`--throttle`); the FSM still owns speed, the value is only exposed as `DriveNet.last_throttle`.
+- **Backends by file extension**: `.pt` (torch), `.onnx` (onnxruntime — FP32/FP16/INT8), `.tflite` (ai-edge-litert / tflite-runtime, NHWC and INT8 I/O handled). The `.json` sidecar (input size, ROI, `norm_px`, arch) must travel with any export; `_read_sidecar()` also falls back to the base `drive_net.json`.
+- **Preprocessing** (`preprocess()`, the single source of truth): ROI rows `[roi_frac, roi_bottom)` of the frame → 200×66 → YUV/255. The ROI is what keeps walls and furniture out of the net — the same trap that fooled the classic BEV on the city track.
+- **Data pipeline** (`vision/drive_data.py`, shared by the CLI and the notebook): label normalization + clipping, optional temporal smoothing (`--smooth N`, never applied to rows whose source is `synthetic` — those are independent draws), throttle normalization, |error| balancing (`--balance`, inverse-frequency sampler so curves are not drowned by straights), block-wise train/val split (50-frame blocks: a per-frame split of a recording leaks neighbours into val). Augmentation: brightness/contrast/gamma, HSV, soft polygon shadows, specular glare, Gaussian/motion blur, noise, JPEG, flip (label negated) and a **perspective** lateral shift (grows from the horizon to the bottom row; label `+= dx * --shift-gain`).
+- **`--shift-gain` matters for real tubs.** Labels from `LanePipeline` are in BEV pixels, the shift is in image pixels at the bottom row; 1.0 is only right for `gen_synth_driving.py` tubs. Measure the ratio on the car before trusting shift augmentation on recorded data.
+- Training (`tools/train_drive.py`, function `train(args)`): AdamW, Huber (default) or MSE, AMP on CUDA, grad clipping, ReduceLROnPlateau, early stopping on val RMSE (`--patience`, `--min-delta`), best weights saved **on every improvement** (Colab can reclaim the session), plus `drive_net_last.pt`, `drive_history.json`, `drive_train.png`.
+- Export (`tools/export_drive.py`): TorchScript + ONNX always; `--fp16`, `--int8` (static QDQ per-channel, calibrated with `--calib <tubs>` through the production preprocessing), `--tflite` (onnx2tf → fp32/fp16/int8). Prints each file's steering RMSE against PyTorch and, with `--bench`, ms/frame. Measured on synthetic data (x86): INT8 differs from FP32 by 0.16–0.23 px. **FPS numbers only mean something when `--bench` runs on the Pi.**
+- onnx2tf validates 3-channel models against a sample file it downloads from its GitHub releases, and that asset 404s — the exporter writes our own calibration frames under the expected name in the work dir. Don't remove that.
+- GPU training: `TMR2026/notebooks/train_colab.ipynb` (Colab/Kaggle): GPU check, clone, dataset from Drive/Kaggle/zip/synthetic, label histogram, augmentation preview, train with early stopping, loss/MSE/RMSE/MAE plots, evaluation montage, export, save to Drive.
+- Earlier bugs fixed in this pipeline (2026-10-03): DataLoader workers shared one RNG (identical augmentations in every worker); `plot` switched matplotlib to Agg process-wide (blank plots in notebooks); MobileNet's `AdaptiveAvgPool2d` to a non-dividing width could not export to ONNX (now a fixed height-only pool sized at build time).
+- Pipeline tools (all share one tub format `frames/ + labels.csv`): `tools/gen_synth_driving.py` (synthetic, no hardware), `tools/record_driving.py` (sim/camera/video/images), `tools/train_drive.py`, `tools/test_drive_net.py` (eval, no GPIO), `tools/export_drive.py`.
 - `weights/drive_net.*` and `TMR2026/datasets/` are gitignored (regenerable; the committed demo would be synthetic-only). Full workflow: `TMR2026/docs/DRIVE_NET.md`.
 
 ## Hard rules (don't break these)

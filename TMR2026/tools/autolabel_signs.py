@@ -128,9 +128,9 @@ def main() -> int:
 
     print(f"[LABEL] labelled {kept}, no proposal in {skipped}")
     print(f"[LABEL] REVIEW {rev_dir}\\ and delete any frame whose box is wrong,")
-    print(f"        then delete the matching files in images\\ and labels\\.")
-    print(f"[LABEL] when the set is clean:")
-    print(f"        python tools/autolabel_signs.py --merge --repeat 3")
+    print("        then delete the matching files in images\\ and labels\\.")
+    print("[LABEL] when the set is clean:")
+    print("        python tools/autolabel_signs.py --merge --repeat 3")
     return 0
 
 
@@ -161,12 +161,12 @@ def do_merge(img_dir: Path, lbl_dir: Path, repeat: int) -> int:
             cache.unlink()
 
     print(f"[MERGE] wrote {n} files into {dst_i}")
-    print(f"[MERGE] label caches cleared so the next run rescans")
+    print("[MERGE] label caches cleared so the next run rescans")
     print(f"[MERGE] every added file starts with '{PREFIX}', so to undo:")
     print(f"        del {dst_i}\\{PREFIX}*  and  {dst_l}\\{PREFIX}*")
-    print(f"[MERGE] now retrain:")
-    print(f"        python TMR2026/tools/train_signs.py --data traffic_lights/data_local.yaml "
-          f"--recipe washout --epochs 60")
+    print("[MERGE] now retrain:")
+    print("        python TMR2026/tools/train_signs.py --data traffic_lights/data_local.yaml "
+          "--recipe washout --epochs 60")
     return 0
 
 

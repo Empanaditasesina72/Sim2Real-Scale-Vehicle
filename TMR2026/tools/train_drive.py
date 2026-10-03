@@ -2,41 +2,46 @@
 """Train the end-to-end steering network (behavioral cloning).
 
 Reads one or more tubs (frames/ + labels.csv) produced by
-tools/gen_synth_driving.py or tools/record_driving.py, applies heavy
-augmentation so the policy generalizes to "any basic road-like track", and
-trains the PilotNet defined in vision/drive_net.py.
+tools/gen_synth_driving.py or tools/record_driving.py, conditions the labels
+(normalization, optional temporal smoothing, optional |error| balancing),
+applies heavy augmentation (see vision/drive_data.py) and trains one of the
+networks defined in vision/drive_net.py:
 
-The label is `error_px` (lane_centre - frame_centre); it is normalized by
---norm-px so the regression target sits in ~[-1, 1]. The norm and input size
-are written next to the weights (drive_net.json) so inference/export reproduce
-the exact preprocessing.
+    --arch pilotnet    NVIDIA PilotNet (default, ~0.25 M params)
+    --arch mobilenet   MobileNetV2-style, depthwise separable (~0.17 M params)
 
-Augmentation (label-aware where geometric):
-  - horizontal flip            -> error_px *= -1
-  - horizontal shift           -> error_px += dx
-  - brightness / contrast / gamma, HSV jitter, shadows, blur, noise (label-free)
+The regression target is `error_px / norm_px`. `--throttle` adds a third head
+trained on the tubs' optional `throttle` column. Everything needed to reproduce
+the preprocessing (input size, ROI, norm, arch) is written next to the weights
+(drive_net.json), and inference/export read it from there.
 
-Outputs:
-  weights/drive_net.pt    {"model": state_dict, "meta": {...}}
-  weights/drive_net.json  {"img_w","img_h","roi_frac","norm_px",...}
-  weights/drive_train.png loss + val-RMSE curves
+GPU: picked automatically when available, with mixed precision (AMP). The same
+code runs on the PC, on the Pi (slowly) and on Colab/Kaggle -- the notebook
+notebooks/train_colab.ipynb calls `train()` below.
+
+Outputs (in the directory of --out):
+  drive_net.pt          {"model": best state_dict, "meta": {...}}
+  drive_net.json        meta sidecar
+  drive_net_last.pt     last-epoch weights (to resume or compare)
+  drive_history.json    per-epoch train loss, val MSE / RMSE / MAE, lr
+  drive_train.png       loss + val-RMSE curves
 
 Usage:
     python TMR2026/tools/train_drive.py --data datasets/drive_synth --epochs 30
     python TMR2026/tools/train_drive.py --data datasets/a,datasets/b \
-        --val datasets/val --epochs 60 --batch 64
-    python TMR2026/tools/train_drive.py --data datasets/drive_synth --device cuda
+        --val datasets/val --epochs 60 --batch 128 --arch mobilenet
+    python TMR2026/tools/train_drive.py --data datasets/real --smooth 5 \
+        --balance --shift-gain 0.9 --throttle
 """
 from __future__ import annotations
 
 import argparse
-import csv
 import json
+import math
 import sys
 import time
 from pathlib import Path
 
-import cv2
 import numpy as np
 import torch
 
@@ -44,226 +49,250 @@ HERE = Path(__file__).resolve().parent
 TMR_ROOT = HERE.parent
 sys.path.insert(0, str(TMR_ROOT))
 
-from vision.drive_net import build_model, preprocess, IMG_W, IMG_H, ROI_FRAC, DEFAULT_NORM_PX
+from vision.drive_net import (ARCHS, DEFAULT_ARCH, DEFAULT_NORM_PX, IMG_H, IMG_W,
+                              ROI_BOTTOM, ROI_FRAC, build_model, count_params)
+from vision.drive_data import (AugConfig, balance_weights, make_dataset,
+                               read_tubs, split_samples, worker_init_fn)
 
 
-def read_tubs(spec: str):
-    """spec = comma-separated tub dirs. Returns list of (abs_image_path, err, conf)."""
-    samples = []
-    for raw in spec.split(","):
-        raw = raw.strip()
-        if not raw:
-            continue
-        tub = Path(raw)
-        if not tub.is_absolute():
-            tub = (TMR_ROOT / tub) if (TMR_ROOT / tub).exists() else (Path.cwd() / tub)
-        csv_path = tub / "labels.csv"
-        if not csv_path.exists():
-            print(f"[WARN] no labels.csv in {tub}")
-            continue
-        with open(csv_path) as f:
-            for r in csv.DictReader(f):
-                samples.append((str(tub / r["frame"]),
-                                float(r["error_px"]), float(r.get("confidence", 1.0))))
-    return samples
-
-
-def augment(img, error_px, norm_px, rng):
-    """Photometric + label-aware geometric augmentation on a BGR frame."""
-    h, w = img.shape[:2]
-
-    if rng.random() < 0.5:
-        img = img[:, ::-1].copy()
-        error_px = -error_px
-
-    if rng.random() < 0.6:
-        dx = int(rng.uniform(-0.12, 0.12) * w)
-        M = np.float32([[1, 0, dx], [0, 1, 0]])
-        img = cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
-        error_px += dx
-
-    if rng.random() < 0.85:
-        gain = float(rng.uniform(0.55, 1.5))
-        bias = float(rng.uniform(-35, 35))
-        img = np.clip(img.astype(np.float32) * gain + bias, 0, 255).astype(np.uint8)
-
-    if rng.random() < 0.4:
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.int16)
-        hsv[..., 0] = (hsv[..., 0] + int(rng.uniform(-12, 12))) % 180
-        hsv[..., 1] = np.clip(hsv[..., 1] * rng.uniform(0.6, 1.4), 0, 255)
-        img = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
-
-    if rng.random() < 0.45:
-        x0 = int(rng.uniform(0, w))
-        poly = np.array([[x0, 0], [x0 + rng.integers(40, 260), 0],
-                         [x0 + rng.integers(-100, 360), h], [x0 - rng.integers(40, 220), h]])
-        sh = img.copy()
-        cv2.fillPoly(sh, [poly], (0, 0, 0))
-        a = float(rng.uniform(0.15, 0.5))
-        img = cv2.addWeighted(img, 1 - a, sh, a, 0)
-
-    if rng.random() < 0.3:
-        k = int(rng.choice([3, 5]))
-        img = cv2.GaussianBlur(img, (k, k), 0)
-
-    if rng.random() < 0.4:
-        img = cv2.add(img, rng.integers(0, 18, size=img.shape, dtype=np.uint8))
-
-    return img, error_px
-
-
-# Module-level (not nested in a factory) so DataLoader workers can pickle it on
-# Windows' spawn start method -> --workers > 0 works there. The per-instance rng
-# keeps augmentation reproducible.
-class TubDataset(torch.utils.data.Dataset):
-    def __init__(self, samples, norm_px, img_w, img_h, roi_frac, train, seed=0):
-        self.samples = samples
-        self.norm_px = norm_px
-        self.img_w, self.img_h, self.roi_frac = img_w, img_h, roi_frac
-        self.train = train
-        self.rng = np.random.default_rng(seed)
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, i):
-        path, err, conf = self.samples[i]
-        img = cv2.imread(path)
-        if img is None:
-            img = np.zeros((self.img_h * 4, self.img_w * 2, 3), np.uint8)
-        if self.train:
-            img, err = augment(img, err, self.norm_px, self.rng)
-        x = preprocess(img, self.img_w, self.img_h, self.roi_frac)
-        y = np.array([err / self.norm_px, conf], dtype=np.float32)
-        return torch.from_numpy(x), torch.from_numpy(y)
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser()
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--data", required=True, help="comma-separated train tub dirs")
     ap.add_argument("--val", default="", help="comma-separated val tubs (else --val-split)")
     ap.add_argument("--val-split", type=float, default=0.15)
+    ap.add_argument("--arch", choices=ARCHS, default=DEFAULT_ARCH)
+    ap.add_argument("--width", type=float, default=1.0, help="mobilenet width multiplier")
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--weight-decay", type=float, default=1e-4)
+    ap.add_argument("--loss", choices=("huber", "mse"), default="huber",
+                    help="steering loss; huber is robust to teacher-label outliers")
     ap.add_argument("--norm-px", type=float, default=DEFAULT_NORM_PX)
     ap.add_argument("--img-w", type=int, default=IMG_W)
     ap.add_argument("--img-h", type=int, default=IMG_H)
+    ap.add_argument("--roi-frac", type=float, default=ROI_FRAC,
+                    help="top of the ROI as a fraction of frame height")
+    ap.add_argument("--roi-bottom", type=float, default=ROI_BOTTOM,
+                    help="bottom of the ROI (cuts the bumper if visible)")
+    ap.add_argument("--smooth", type=int, default=0,
+                    help="temporal moving-average window on recorded labels (0=off)")
+    ap.add_argument("--balance", action="store_true",
+                    help="oversample large |error| (curves) with inverse-frequency weights")
+    ap.add_argument("--throttle", action="store_true",
+                    help="train a throttle head on the tubs' `throttle` column")
+    ap.add_argument("--throttle-max", type=float, default=100.0,
+                    help="value of `throttle` that maps to 1.0")
+    ap.add_argument("--shift-gain", type=float, default=1.0,
+                    help="label px per image px of lateral-shift augmentation")
     ap.add_argument("--workers", type=int, default=0)
-    ap.add_argument("--patience", type=int, default=10)
+    ap.add_argument("--patience", type=int, default=10, help="early-stopping patience")
+    ap.add_argument("--min-delta", type=float, default=0.5,
+                    help="val RMSE (px) improvement that resets patience")
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--no-amp", action="store_true", help="disable mixed precision on CUDA")
     ap.add_argument("--out", default=str(TMR_ROOT / "weights" / "drive_net.pt"))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--no-aug", action="store_true")
-    args = ap.parse_args()
+    return ap
 
+
+def _loss_fn(out, y, kind: str, use_throttle: bool):
     import torch.nn.functional as F
+    if kind == "huber":
+        steer = F.smooth_l1_loss(out[:, 0], y[:, 0], beta=0.1)
+    else:
+        steer = F.mse_loss(out[:, 0], y[:, 0])
+    loss = steer + 0.2 * F.binary_cross_entropy_with_logits(out[:, 1], y[:, 1])
+    if use_throttle:
+        m = ~torch.isnan(y[:, 2])
+        if m.any():
+            loss = loss + 0.5 * F.binary_cross_entropy_with_logits(out[m, 2], y[m, 2])
+    return loss
 
+
+def evaluate(model, loader, device, norm_px: float) -> dict:
+    """Steering metrics in label pixels over a loader."""
+    model.eval()
+    se = ae = 0.0
+    n = 0
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb, yb = xb.to(device), yb.to(device)
+            d = (model(xb)[:, 0].float() - yb[:, 0]) * norm_px
+            se += float((d ** 2).sum())
+            ae += float(d.abs().sum())
+            n += xb.size(0)
+    mse = se / max(1, n)
+    return {"mse_px2": mse, "rmse_px": math.sqrt(mse), "mae_px": ae / max(1, n)}
+
+
+def plot_history(hist: dict, path: Path) -> bool:
+    # A standalone Figure, not pyplot: matplotlib.use("Agg") here would switch
+    # the backend of the whole process, and inside a notebook every plot after
+    # train() would then silently stop rendering.
+    try:
+        from matplotlib.figure import Figure
+    except Exception as e:
+        print(f"[TRAIN] (no curve: {e})")
+        return False
+    ep = np.arange(1, len(hist["train_loss"]) + 1)
+    fig = Figure(figsize=(11, 4))
+    a1, a2 = fig.subplots(1, 2)
+    a1.plot(ep, hist["train_loss"], "b-", label="train loss")
+    a1.set_xlabel("epoch"); a1.set_ylabel("loss"); a1.set_yscale("log")
+    a1.grid(alpha=.3); a1.legend()
+    a2.plot(ep, hist["val_rmse_px"], "r-", label="val RMSE (px)")
+    a2.plot(ep, hist["val_mae_px"], "r--", alpha=.6, label="val MAE (px)")
+    if hist.get("best_epoch"):
+        a2.axvline(hist["best_epoch"], color="k", ls=":", label="best")
+    a2.set_xlabel("epoch"); a2.set_ylabel("px"); a2.grid(alpha=.3); a2.legend()
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    return True
+
+
+def train(args) -> dict:
+    """Train with parsed `args` (see build_parser). Returns the history dict."""
     device = ("cuda" if torch.cuda.is_available() else "cpu") \
         if args.device == "auto" else args.device
     torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
 
-    train_samples = read_tubs(args.data)
-    if not train_samples:
-        print("ERROR: no training samples found")
-        sys.exit(1)
-
+    roots = (TMR_ROOT, TMR_ROOT.parent)
+    samples = read_tubs(args.data, roots, args.smooth, args.throttle_max)
+    if not samples:
+        raise SystemExit("ERROR: no training samples found")
     if args.val:
-        val_samples = read_tubs(args.val)
+        train_s = samples
+        val_s = read_tubs(args.val, roots, args.smooth, args.throttle_max)
     else:
-        rng = np.random.default_rng(args.seed)
-        idx = rng.permutation(len(train_samples))
-        n_val = int(len(idx) * args.val_split)
-        val_idx, tr_idx = set(idx[:n_val].tolist()), idx[n_val:]
-        val_samples = [train_samples[i] for i in sorted(val_idx)]
-        train_samples = [train_samples[i] for i in tr_idx]
+        train_s, val_s = split_samples(samples, args.val_split, args.seed)
+    if not val_s:
+        raise SystemExit("ERROR: empty validation set (use --val or --val-split > 0)")
 
-    print(f"[TRAIN] device={device}  train={len(train_samples)}  val={len(val_samples)}")
-    print(f"[TRAIN] img={args.img_w}x{args.img_h}  norm_px={args.norm_px}  aug={not args.no_aug}")
+    use_thr = bool(args.throttle)
+    if use_thr and not any(s.throttle is not None for s in train_s):
+        print("[TRAIN] WARN: --throttle but no tub has a `throttle` column; ignoring")
+        use_thr = False
+    n_out = 3 if use_thr else 2
 
-    tr_ds = TubDataset(train_samples, args.norm_px, args.img_w, args.img_h,
-                       ROI_FRAC, train=not args.no_aug, seed=args.seed)
-    va_ds = TubDataset(val_samples, args.norm_px, args.img_w, args.img_h,
-                       ROI_FRAC, train=False, seed=args.seed + 1)
-    tr_dl = torch.utils.data.DataLoader(tr_ds, batch_size=args.batch, shuffle=True,
-                                        num_workers=args.workers, drop_last=False)
+    aug = None
+    if not args.no_aug:
+        aug = AugConfig(shift_gain=args.shift_gain)
+
+    tr_ds = make_dataset(train_s, args.norm_px, args.img_w, args.img_h,
+                         args.roi_frac, args.roi_bottom, aug, args.seed)
+    va_ds = make_dataset(val_s, args.norm_px, args.img_w, args.img_h,
+                         args.roi_frac, args.roi_bottom, None, args.seed + 1)
+
+    pin = device.startswith("cuda")
+    if args.balance:
+        w = balance_weights(train_s, args.norm_px)
+        sampler = torch.utils.data.WeightedRandomSampler(
+            torch.as_tensor(w, dtype=torch.double), len(train_s), replacement=True)
+        tr_dl = torch.utils.data.DataLoader(
+            tr_ds, batch_size=args.batch, sampler=sampler, num_workers=args.workers,
+            worker_init_fn=worker_init_fn, pin_memory=pin,
+            persistent_workers=args.workers > 0)
+    else:
+        tr_dl = torch.utils.data.DataLoader(
+            tr_ds, batch_size=args.batch, shuffle=True, num_workers=args.workers,
+            worker_init_fn=worker_init_fn, pin_memory=pin,
+            persistent_workers=args.workers > 0)
     va_dl = torch.utils.data.DataLoader(va_ds, batch_size=args.batch, shuffle=False,
-                                        num_workers=args.workers)
+                                        num_workers=args.workers, pin_memory=pin)
 
-    model = build_model().to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    model = build_model(args.arch, n_out, args.width, args.img_w, args.img_h).to(device)
+    print(f"[TRAIN] device={device}  arch={args.arch}  params={count_params(model):,}  "
+          f"train={len(train_s)}  val={len(val_s)}")
+    print(f"[TRAIN] img={args.img_w}x{args.img_h}  roi=[{args.roi_frac},{args.roi_bottom}]  "
+          f"norm_px={args.norm_px}  aug={aug is not None}  smooth={args.smooth}  "
+          f"balance={args.balance}  throttle={use_thr}  loss={args.loss}")
+
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr,
+                            weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, factor=0.5, patience=4)
+    use_amp = device.startswith("cuda") and not args.no_amp
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    meta = {"arch": args.arch, "width": args.width, "n_out": n_out,
+            "img_w": args.img_w, "img_h": args.img_h,
+            "roi_frac": args.roi_frac, "roi_bottom": args.roi_bottom,
+            "norm_px": args.norm_px, "throttle_max": args.throttle_max,
+            "smooth": args.smooth, "shift_gain": args.shift_gain,
+            "train_n": len(train_s), "val_n": len(val_s)}
 
     best_rmse = float("inf")
     best_state = None
     bad = 0
-    hist = {"train": [], "val_rmse_px": []}
+    hist = {"train_loss": [], "val_mse_px2": [], "val_rmse_px": [],
+            "val_mae_px": [], "lr": [], "best_epoch": 0}
 
     for ep in range(1, args.epochs + 1):
         model.train()
         t0 = time.time()
-        tr_loss = 0.0
+        tot = 0.0
+        seen = 0
         for xb, yb in tr_dl:
-            xb, yb = xb.to(device), yb.to(device)
-            opt.zero_grad()
-            out = model(xb)
-            loss = F.mse_loss(out[:, 0], yb[:, 0]) + 0.2 * F.binary_cross_entropy_with_logits(out[:, 1], yb[:, 1])
-            loss.backward()
-            opt.step()
-            tr_loss += loss.item() * xb.size(0)
-        tr_loss /= max(1, len(tr_ds))
+            xb = xb.to(device, non_blocking=True)
+            yb = yb.to(device, non_blocking=True)
+            opt.zero_grad(set_to_none=True)
+            with torch.autocast("cuda", enabled=use_amp):
+                out = model(xb)
+            loss = _loss_fn(out.float(), yb, args.loss, use_thr)
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+            scaler.step(opt)
+            scaler.update()
+            tot += loss.item() * xb.size(0)
+            seen += xb.size(0)
+        tr_loss = tot / max(1, seen)
 
-        model.eval()
-        sq = 0.0
-        n = 0
-        with torch.no_grad():
-            for xb, yb in va_dl:
-                xb, yb = xb.to(device), yb.to(device)
-                pred_err = model(xb)[:, 0] * args.norm_px
-                tgt_err = yb[:, 0] * args.norm_px
-                sq += float(((pred_err - tgt_err) ** 2).sum().item())
-                n += xb.size(0)
-        val_rmse = (sq / max(1, n)) ** 0.5
-        sched.step(val_rmse)
-        hist["train"].append(tr_loss)
-        hist["val_rmse_px"].append(val_rmse)
+        m = evaluate(model, va_dl, device, args.norm_px)
+        sched.step(m["rmse_px"])
+        hist["train_loss"].append(tr_loss)
+        hist["val_mse_px2"].append(m["mse_px2"])
+        hist["val_rmse_px"].append(m["rmse_px"])
+        hist["val_mae_px"].append(m["mae_px"])
+        hist["lr"].append(opt.param_groups[0]["lr"])
         print(f"  ep {ep:3d}/{args.epochs}  train_loss {tr_loss:.4f}  "
-              f"val_RMSE {val_rmse:6.1f}px  ({time.time()-t0:.1f}s)")
+              f"val_RMSE {m['rmse_px']:6.1f}px  MAE {m['mae_px']:5.1f}px  "
+              f"lr {hist['lr'][-1]:.1e}  ({time.time() - t0:.1f}s)", flush=True)
 
-        if val_rmse < best_rmse - 0.5:
-            best_rmse = val_rmse
-            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+        if m["rmse_px"] < best_rmse - args.min_delta:
+            best_rmse = m["rmse_px"]
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            hist["best_epoch"] = ep
             bad = 0
+            # Save on every improvement: a Colab session can be reclaimed at any
+            # moment, and the best weights must already be on disk when it is.
+            torch.save({"model": best_state, "meta": {**meta, "val_rmse_px": best_rmse,
+                                                      "epoch": ep}}, out_path)
         else:
             bad += 1
             if bad >= args.patience:
-                print(f"[TRAIN] early stop at epoch {ep} (best val_RMSE {best_rmse:.1f}px)")
+                print(f"[TRAIN] early stop at epoch {ep} "
+                      f"(best val_RMSE {best_rmse:.1f}px @ epoch {hist['best_epoch']})")
                 break
 
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    meta = {"img_w": args.img_w, "img_h": args.img_h, "roi_frac": ROI_FRAC,
-            "norm_px": args.norm_px, "val_rmse_px": best_rmse,
-            "train_n": len(train_samples), "val_n": len(val_samples)}
+    meta.update({"val_rmse_px": best_rmse, "epoch": hist["best_epoch"]})
     torch.save({"model": best_state or model.state_dict(), "meta": meta}, out_path)
+    torch.save({"model": model.state_dict(), "meta": meta},
+               out_path.with_name(out_path.stem + "_last.pt"))
     out_path.with_suffix(".json").write_text(json.dumps(meta, indent=2))
+    out_path.with_name("drive_history.json").write_text(json.dumps(hist, indent=2))
     print(f"[TRAIN] saved {out_path}  (best val_RMSE {best_rmse:.1f}px)")
+    if plot_history(hist, out_path.with_name("drive_train.png")):
+        print(f"[TRAIN] curves -> {out_path.with_name('drive_train.png')}")
+    return hist
 
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        fig, ax1 = plt.subplots(figsize=(7, 4))
-        ax1.plot(hist["train"], "b-", label="train loss")
-        ax1.set_xlabel("epoch"); ax1.set_ylabel("train loss", color="b")
-        ax2 = ax1.twinx()
-        ax2.plot(hist["val_rmse_px"], "r-", label="val RMSE px")
-        ax2.set_ylabel("val RMSE (px)", color="r")
-        fig.tight_layout()
-        fig.savefig(out_path.with_name("drive_train.png"), dpi=110)
-        print(f"[TRAIN] curve -> {out_path.with_name('drive_train.png')}")
-    except Exception as e:
-        print(f"[TRAIN] (no curve: {e})")
+
+def main() -> None:
+    train(build_parser().parse_args())
 
 
 if __name__ == "__main__":

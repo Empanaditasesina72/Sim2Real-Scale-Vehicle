@@ -19,7 +19,6 @@ Soft-Start:
 
 import threading
 import time
-from typing import Optional
 
 # lgpio FIRST. On a Pi 5 RPi.GPIO has no hardware PWM and falls back to a
 # Python-timed software one, whose effective duty collapses when the CPU is
@@ -171,23 +170,24 @@ class MotorDriver:
     def _ramp_loop(self) -> None:
         """Move _current toward _target with a ramp limit."""
         while self._running:
+            # Read, step, write and apply under ONE lock hold. This used to read
+            # under the lock, release it, then write back `current + step` and
+            # drive the H-bridge with it. A brake() landing in that gap set
+            # _current to 0 and cut the PWM, and the ramp thread then overwrote
+            # both with its stale value -- re-energising the motor (e.g. at 27 %
+            # when ramping down from 35 %) right after an emergency stop.
             with self._lock:
-                target  = self._target
-                current = self._current
+                diff = self._target - self._current
+                if diff > 0:
+                    step = min(diff,  self._SLEW_UP)
+                elif diff < 0:
+                    step = max(diff, -self._SLEW_DOWN)
+                else:
+                    step = 0.0
 
-            diff = target - current
-            if diff > 0:
-                step = min(diff,  self._SLEW_UP)
-            elif diff < 0:
-                step = max(diff, -self._SLEW_DOWN)
-            else:
-                step = 0.0
-
-            if step != 0.0:
-                new_duty = current + step
-                with self._lock:
-                    self._current = new_duty
-                self._apply_hw(new_duty)
+                if step != 0.0:
+                    self._current += step
+                    self._apply_hw(self._current)
 
             time.sleep(self._TICK_S)
 

@@ -58,7 +58,7 @@ while time.time() - start < 5:
 c.close()
 print()
 print("=" * 60)
-print(f"RESULTADO LOOPBACK PYTHON:")
+print("RESULTADO LOOPBACK PYTHON:")
 print(f"  recv() calls:  {recv_count}")
 print(f"  Bytes totales: {total_bytes}")
 print("=" * 60)

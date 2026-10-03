@@ -210,7 +210,7 @@ def main() -> int:
         print(f"  CPU temp     : {temp0} -> {temp1} C")
     print("=" * 58)
     print(f"[BENCH] CSV: {out}")
-    print(f"[BENCH] Full distribution + figure:")
+    print("[BENCH] Full distribution + figure:")
     print(f'        python tools/latency_stats.py "{out}" --deadline {deadline_ms:.0f} '
           f'--label "{backend}"')
     return 0

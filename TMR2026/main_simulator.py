@@ -172,7 +172,7 @@ class VehicleSimulator:
             self.sim = SimulatorClient(host=SIMULATOR_HOST, port=SIMULATOR_PORT)
         except Exception as e:
             print(f"[SIM] ERROR: cannot connect to the simulator at {SIMULATOR_HOST}:{SIMULATOR_PORT}")
-            print(f"[SIM] Is Unity running?")
+            print("[SIM] Is Unity running?")
             raise
 
         self.motor    = self.sim.motor
@@ -458,16 +458,16 @@ class VehicleSimulator:
         """Wait for an automatic command (for tests)."""
         self.motor.brake()
         self.steering.set_angle(SERVO_CENTER)
-        print(f"\r[STANDBY] Waiting for command... ("
-              f"run: sim.set_mode(VehicleSimulator.Mode.AUTONOMOUS))  ",
+        print("\r[STANDBY] Waiting for command... ("
+              "run: sim.set_mode(VehicleSimulator.Mode.AUTONOMOUS))  ",
               end="", flush=True)
 
     def _do_manual(self) -> None:
         """Manual mode -- on PC it needs an API, not a gamepad."""
         self.motor.brake()
         self.steering.set_angle(SERVO_CENTER)
-        print(f"\r[MANUAL] Not available in the simulator (needs a gamepad). "
-              f"Switching to AUTONOMOUS...", end="", flush=True)
+        print("\r[MANUAL] Not available in the simulator (needs a gamepad). "
+              "Switching to AUTONOMOUS...", end="", flush=True)
         self._mode = self.Mode.AUTONOMOUS
         self.fsm.activate()
 

@@ -153,7 +153,7 @@ def main() -> None:
 
     print(f"[TRAIN] base={base}  data={args.data}  imgsz={args.imgsz}  "
           f"epochs={args.epochs}  device={device}")
-    print(f"[TRAIN] flips DISABLED (directional arrow classes)")
+    print("[TRAIN] flips DISABLED (directional arrow classes)")
     print(f"[TRAIN] recipe={args.recipe}  "
           f"hsv_h={RECIPES[args.recipe]['hsv_h']} "
           f"hsv_s={RECIPES[args.recipe]['hsv_s']} "

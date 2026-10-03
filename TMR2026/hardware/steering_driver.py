@@ -153,9 +153,12 @@ class SteeringDriver:
         delta = math.radians(center_deg)
         R = WHEELBASE / math.tan(delta)
 
+        # The inner wheel always sits on the turn's side, so it is always the
+        # smaller radius. This used to scale the half-track by `sign`, which
+        # swapped inner and outer on every left turn.
         sign = math.copysign(1, center_deg)
-        R_inner = abs(R) - sign * TRACK_WIDTH / 2
-        R_outer = abs(R) + sign * TRACK_WIDTH / 2
+        R_inner = abs(R) - TRACK_WIDTH / 2
+        R_outer = abs(R) + TRACK_WIDTH / 2
 
         inner_deg = math.degrees(math.atan(WHEELBASE / R_inner)) * sign if R_inner != 0 else 90.0 * sign
         outer_deg = math.degrees(math.atan(WHEELBASE / R_outer)) * sign if R_outer != 0 else 0.0
