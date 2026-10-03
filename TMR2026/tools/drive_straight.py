@@ -193,12 +193,12 @@ def verdict(stats: list[dict]) -> float | None:
     if abs(e) > 25:
         good = False
         print(f"  X TERMINA {abs(e)/PX_PER_CM:.1f} cm fuera del centro del carril.")
-        print(f"    -> recentra el carro a mano, corre diag_track y ajusta")
+        print("    -> recentra el carro a mano, corre diag_track y ajusta")
         print(f"       LANE_ERROR_OFFSET_PX (ahora {LANE_ERROR_OFFSET_PX}).")
     if w > 25:
         good = False
         print(f"  X SERPENTEA {w/PX_PER_CM:.1f} cm al final del recorrido.")
-        print(f"    -> apunta mas lejos: LANE_AIM_WINDOW_FRAC hacia 0.85,")
+        print("    -> apunta mas lejos: LANE_AIM_WINDOW_FRAC hacia 0.85,")
         print(f"       o baja STEER_KP (ahora {STEER_KP}).")
     if good:
         print("  OK -- VA DERECHO Y SE QUEDA EN EL CARRIL.")
@@ -219,17 +219,17 @@ def verdict(stats: list[dict]) -> float | None:
     print()
     print(f"  TRIM: el servo se sostuvo en {a:.2f} deg ({dev:+.2f} del centro)")
     if AutonomousFSM.DEADBAND_PX > 0:
-        print(f"    (banda muerta activa -> esta lectura NO sirve para el trim;")
-        print(f"     repite con --no-deadband)")
+        print("    (banda muerta activa -> esta lectura NO sirve para el trim;")
+        print("     repite con --no-deadband)")
         print("=" * 62)
         return None
     if abs(dev) < 0.4:
-        print(f"    trim correcto: el controlador no necesita sostener nada.")
+        print("    trim correcto: el controlador no necesita sostener nada.")
         print("=" * 62)
         return None
     print(f"    sesgo mecanico residual {-dev:+.2f} deg  ->  "
           f"SERVO_TRIM_DEG {SERVO_TRIM_DEG:+.1f} deberia ser {suggested:+.1f}")
-    print(f"    aplicalo con:  python tools/drive_straight.py --apply-trim")
+    print("    aplicalo con:  python tools/drive_straight.py --apply-trim")
     print("=" * 62)
     return suggested
 

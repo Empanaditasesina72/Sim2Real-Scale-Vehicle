@@ -119,7 +119,7 @@ _TRACK_CALIB = _load_track_calib()
 
 from hardware.motor            import MotorDriver
 from hardware.steering_driver  import SteeringDriver
-from hardware.distance_sensor  import DistanceSensor, make_distance_sensor
+from hardware.distance_sensor  import make_distance_sensor
 from hardware.signals          import TurnSignals, SignalMode
 from hardware.brake_light      import BrakeLight
 from vision.camera_stream      import CameraStream
@@ -541,6 +541,9 @@ class VehicleTMR:
         """
         frame = self.camera.get_frame()
         if frame is None:
+            # No fresh frame (capture stalled or not started): report zero lane
+            # confidence so CRUCERO brakes instead of steering on stale data.
+            self.fsm.lane_conf = 0.0
             return
 
         self._last_lane = self.lane_pipe.process(frame)

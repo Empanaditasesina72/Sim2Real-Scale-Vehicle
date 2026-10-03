@@ -159,7 +159,7 @@ def main() -> int:
     stop_served_at = None
     parking = False
     log, phase = [], "CARRIL"
-    print(f"\n[FASE 1] CARRIL -- siguiendo la linea\n")
+    print("\n[FASE 1] CARRIL -- siguiendo la linea\n")
 
     try:
         while time.monotonic() - t0 < args.timeout:

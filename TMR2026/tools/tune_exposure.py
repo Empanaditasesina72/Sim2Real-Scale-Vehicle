@@ -251,7 +251,7 @@ def main() -> None:
         else:
             apply_to_config(*eff)
     else:
-        print(f"[TUNE] re-run with --apply to write this into config.py")
+        print("[TUNE] re-run with --apply to write this into config.py")
 
 
 if __name__ == "__main__":

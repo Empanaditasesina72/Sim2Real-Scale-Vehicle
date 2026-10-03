@@ -99,7 +99,7 @@ def test_connection():
             sim.motor.brake()
             time.sleep(0.2)
             if sim.motor.current_duty == 0.0:
-                print(f"  ✓ Motor braked successfully (duty = 0.0%)")
+                print("  ✓ Motor braked successfully (duty = 0.0%)")
             else:
                 print(f"  ⚠ Brake set but duty not zero: {sim.motor.current_duty}%")
         except Exception as e:

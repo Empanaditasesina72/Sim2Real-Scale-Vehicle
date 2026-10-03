@@ -58,6 +58,10 @@ class DistanceSensor:
                 print(f"[TOF] Front OK @ 0x{TOF_ADDR_FRONT:02X}")
             except Exception as e:
                 self._front = None
+                # Power it back down: a front sensor that answered but failed
+                # set_address() would still sit at the default 0x29 and collide
+                # with the rear one, which is brought up at 0x29 next.
+                lgpio.gpio_write(self._h, PIN_TOF_XSHUT_FRONT, 0)
                 print(f"[TOF] Front not detected ({e}) - degrading to rear-only")
 
             lgpio.gpio_write(self._h, PIN_TOF_XSHUT_REAR, 1)
@@ -98,9 +102,14 @@ class DistanceSensor:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=1.0)
-        lgpio.gpio_free(self._h, PIN_TOF_XSHUT_FRONT)
-        lgpio.gpio_free(self._h, PIN_TOF_XSHUT_REAR)
-        lgpio.gpiochip_close(self._h)
+        if self._h is None:
+            return                      # already stopped: closing twice raises
+        try:
+            lgpio.gpio_free(self._h, PIN_TOF_XSHUT_FRONT)
+            lgpio.gpio_free(self._h, PIN_TOF_XSHUT_REAR)
+            lgpio.gpiochip_close(self._h)
+        finally:
+            self._h = None
 
     @property
     def front_mm(self) -> float | None:
@@ -123,19 +132,27 @@ class DistanceSensor:
 
     def _poll_loop(self):
         while not self._stop_event.is_set():
-            try:
-                rf = self._front.range if self._front else None
-                rr = self._rear.range  if self._rear  else None
-                front = rf if (rf and rf < TOF_MAX_RANGE_MM) else None
-                rear  = rr if (rr and rr < TOF_MAX_RANGE_MM) else None
-            except Exception:
-                front = rear = None
+            # Each sensor is read on its own: an I2C error on one must not
+            # blank the other's reading.
+            front = self._read(self._front)
+            rear  = self._read(self._rear)
 
             with self._lock:
                 self._front_mm = front
                 self._rear_mm  = rear
 
             time.sleep(TOF_POLL_INTERVAL_S)
+
+
+    @staticmethod
+    def _read(sensor) -> float | None:
+        if sensor is None:
+            return None
+        try:
+            r = sensor.range
+        except Exception:
+            return None
+        return r if (r and r < TOF_MAX_RANGE_MM) else None
 
 
 class NullDistanceSensor:

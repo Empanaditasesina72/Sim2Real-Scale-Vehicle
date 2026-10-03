@@ -108,9 +108,9 @@ def main() -> int:
     }
 
     print()
-    print(f"  Assuming the car drives centred in the RIGHT lane, the camera axis")
+    print("  Assuming the car drives centred in the RIGHT lane, the camera axis")
     print(f"  sits {lane_centre_from_dashed * 100:.1f} cm right of the dashed line.")
-    print(f"  Lateral offsets from the camera axis and first distance in frame:")
+    print("  Lateral offsets from the camera axis and first distance in frame:")
     visible_near = []
     for name, off in offsets.items():
         needed = abs(off) / math.tan(math.radians(hfov / 2.0))
@@ -179,11 +179,11 @@ def main() -> int:
     if d_exit < STOP_TARGET_MM / 1000.0:
         print(f"  => OK: the car stops at {STOP_TARGET_MM} mm, "
               f"{STOP_TARGET_MM - d_exit * 1000:.0f} mm of margin. The detector")
-        print(f"     keeps the sign in view for the whole braking phase.")
+        print("     keeps the sign in view for the whole braking phase.")
     else:
         print(f"  => PROBLEM: the sign is lost before reaching the "
               f"{STOP_TARGET_MM} mm setpoint;")
-        print(f"     raise the sign or the camera, or increase STOP_TARGET_MM.")
+        print("     raise the sign or the camera, or increase STOP_TARGET_MM.")
 
     print()
     print("=" * 66)
@@ -205,22 +205,22 @@ def main() -> int:
     if abs(servo_span - MAX_STEERING_ANGLE_DEG) > 1.0:
         print(f"  => NOTE: the servo reaches {servo_span:.0f} deg but "
               f"MAX_STEERING_ANGLE_DEG says {MAX_STEERING_ANGLE_DEG:.0f} deg.")
-        print(f"     Unless the linkage geometrically amplifies servo travel, the")
+        print("     Unless the linkage geometrically amplifies servo travel, the")
         print(f"     achievable radius is {r_servo:.3f} m, not {r_min:.3f} m. State")
-        print(f"     the measured wheel angle at full servo lock in the paper.")
+        print("     the measured wheel angle at full servo lock in the paper.")
 
     if CAR_LENGTH < WHEELBASE:
         print()
         print(f"  => INCONSISTENT: wheelbase {WHEELBASE * 100:.1f} cm exceeds "
               f"CAR_LENGTH {CAR_LENGTH * 100:.1f} cm.")
-        print(f"     Axle-to-axle cannot be longer than the vehicle. Either")
-        print(f"     CAR_LENGTH is the chassis only (wheels overhang it), or one")
-        print(f"     of the two was mismeasured. Re-check before publishing.")
+        print("     Axle-to-axle cannot be longer than the vehicle. Either")
+        print("     CAR_LENGTH is the chassis only (wheels overhang it), or one")
+        print("     of the two was mismeasured. Re-check before publishing.")
     print()
     print(f"  Lane width is {LANE_WIDTH_M * 100:.1f} cm and the minimum radius is "
           f"{r_min * 100:.0f} cm,")
     print(f"  so a full-lock turn needs {r_min / LANE_WIDTH_M:.1f} lane widths of room:")
-    print(f"  keep the physical runs on the straight and steer gently.")
+    print("  keep the physical runs on the straight and steer gently.")
 
     print()
     print("=" * 66)

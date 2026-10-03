@@ -19,9 +19,7 @@ import time
 import sys
 import numpy as np
 import cv2
-import io
 from typing import Optional
-from collections import deque
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -170,7 +168,7 @@ class SimulatorClient:
 
         try:
             self.socket.connect((host, port))
-            print(f"[SimClient] Connected to the simulator")
+            print("[SimClient] Connected to the simulator")
         except Exception as e:
             print(f"[SimClient] ERROR connecting: {e}")
             print(f"[SimClient] Is Unity running on {host}:{port}?")

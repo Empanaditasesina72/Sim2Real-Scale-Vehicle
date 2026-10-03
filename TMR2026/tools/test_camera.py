@@ -71,7 +71,7 @@ def draw_overlay(frame, lane_pipe, lane, pid, angle_target, fps, dets):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
     _draw_panel(vis, 8, 200, 320, 160, lines=[
-        f"MODE  : TEST",
+        "MODE  : TEST",
         f"err   :{lane.error_px:+7.1f}px  conf:{lane.confidence:.0%}",
         f"P     :{pid.last_p:+7.2f}   kp={pid.kp:.3f}",
         f"I     :{pid.last_i:+7.2f}   ki={pid.ki:.3f}",
@@ -92,7 +92,7 @@ def draw_overlay(frame, lane_pipe, lane, pid, angle_target, fps, dets):
         ]
     _draw_panel(vis, 336, 200, 296, 160, lines=obj_lines)
 
-    cv2.putText(vis, f"TEST  duty:  0%   ('q'/ESC quit)",
+    cv2.putText(vis, "TEST  duty:  0%   ('q'/ESC quit)",
                 (8, H - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2, cv2.LINE_AA)
 
